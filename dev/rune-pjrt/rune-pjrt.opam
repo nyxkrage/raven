@@ -1,0 +1,32 @@
+opam-version: "2.0"
+synopsis: "Experimental PJRT/XLA JIT backend for Rune"
+description:
+  "Rune-pjrt is an experimental PJRT/XLA JIT backend for Rune. It traces Rune programs, lowers them to StableHLO, and executes them through PJRT on CPU and CUDA."
+maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
+authors: ["Thibaut Mattio"]
+license: "ISC"
+homepage: "https://github.com/raven-ml/raven"
+bug-reports: "https://github.com/raven-ml/raven/issues"
+depends: [
+  "ocaml" {>= "5.2.0"}
+  "dune" {>= "3.21"}
+  "dune-configurator" {build}
+  "nx"
+  "rune"
+  "kaun" {with-test}
+]
+build: [
+  ["dune" "subst"] {dev}
+  [
+    "dune"
+    "build"
+    "-p"
+    name
+    "-j"
+    jobs
+    "@install"
+    "@runtest" {with-test}
+  ]
+]
+dev-repo: "git+https://github.com/raven-ml/raven.git"
+x-maintenance-intent: ["(latest)"]

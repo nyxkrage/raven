@@ -1,3 +1,10 @@
+(library
+ (name gpt2_example)
+ (wrapped false)
+ (modules gpt2)
+ (libraries nx nx.core rune kaun kaun.hf brot jsont))
+
 (executable
  (name main)
- (libraries nx nx.core rune kaun kaun.hf brot jsont))
+ (modules main)
+ (libraries gpt2_example nx nx.core rune kaun kaun.hf brot jsont))

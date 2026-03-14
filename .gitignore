@@ -19,6 +19,13 @@ dev-tools.locks/
 # Python virtual environment directory
 .venv/
 
+# Local benchmark outputs
+dev/rune-pjrt/bench/results-*.json
+dev/rune-pjrt/bench/__pycache__/
+
+# Local vendored source checkouts
+vendor/xla/
+
 # Environment variable files
 .env
 
