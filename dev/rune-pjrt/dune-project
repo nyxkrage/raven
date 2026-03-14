@@ -1,0 +1,17 @@
+(lang dune 3.21)
+
+(name rune-pjrt)
+
+(package
+ (name rune-pjrt)
+ (synopsis "Experimental PJRT/XLA JIT backend for Rune")
+ (description
+  "Rune-pjrt is an experimental PJRT/XLA JIT backend for Rune. It traces Rune programs, lowers them to StableHLO, and executes them through PJRT on CPU and CUDA." )
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  (dune-configurator :build)
+  nx
+  rune
+  (kaun :with-test)))

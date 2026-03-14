@@ -1,0 +1,9 @@
+(executable
+ (name pjrt_main)
+ (modules pjrt_main)
+ (libraries gpt2_example nx nx.core rune kaun kaun.hf brot jsont rune-pjrt unix))
+
+(executable
+ (name bench_main)
+ (modules bench_main gpt2_bench_support)
+ (libraries gpt2_example nx nx.core rune kaun kaun.hf brot jsont rune-pjrt unix))
