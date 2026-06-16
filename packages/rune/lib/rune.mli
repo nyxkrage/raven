@@ -367,8 +367,65 @@ val vmaps :
 
 (** {1:jit JIT compilation} *)
 
+module Device : sig
+  type t
+  (** The type for Rune JIT devices. *)
+
+  val tolk : Tolk.Device.t -> t
+  (** [tolk device] uses a Tolk device for JIT execution. *)
+
+  val pjrt : Rune_pjrt.Device.t -> t
+  (** [pjrt device] uses a PJRT device for JIT execution. *)
+end
+
+module Backend : sig
+  type t =
+    | Tolk_cpu
+    | Pjrt_cpu
+    | Pjrt_cuda  (** Available Rune JIT backend choices. *)
+
+  val all : t list
+  (** [all] is the list of known backend choices. *)
+
+  val default : t
+  (** [default] is the backend used when no backend is selected. *)
+
+  val to_string : t -> string
+  (** [to_string backend] is the command-line friendly backend name. *)
+
+  val of_string : string -> t
+  (** [of_string value] parses ["tolk-cpu"], ["pjrt-cpu"], or ["pjrt-cuda"].
+
+      Also accepts ["tolk"], ["cuda"], and underscore variants. *)
+
+  val of_env : ?var:string -> ?default:t -> unit -> t
+  (** [of_env ?var ?default ()] reads a backend name from [var].
+
+      [var] defaults to ["RUNE_JIT_BACKEND"]. [default] defaults to {!default}.
+  *)
+
+  val pjrt_device_id_of_env : ?var:string -> ?default:int -> unit -> int
+  (** [pjrt_device_id_of_env ?var ?default ()] reads the PJRT device index from
+      [var].
+
+      [var] defaults to ["RUNE_PJRT_DEVICE_ID"]. [default] defaults to [0]. *)
+
+  val available : t -> bool
+  (** [available backend] is [true] when the backend can be selected in the
+      current process. *)
+
+  val require : t -> unit
+  (** [require backend] raises if [backend] is unavailable. *)
+
+  val device : ?tolk_name:string -> ?pjrt_device_id:int -> t -> Device.t
+  (** [device backend] constructs a Rune JIT device for [backend].
+
+      [tolk_name] defaults to ["CPU"]. [pjrt_device_id] defaults to
+      {!pjrt_device_id_of_env}. *)
+end
+
 val jit :
-  ?device:Tolk.Device.t ->
+  ?device:Device.t ->
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   ('c, 'd) Nx.t
@@ -376,7 +433,7 @@ val jit :
 
     - Call 1 (warmup): executes eagerly
     - Call 2 (capture): intercepts tensor operations, builds computation graph,
-      compiles via Tolk's codegen pipeline
+      compiles via the selected backend
     - Calls 3+ (replay): executes the compiled schedule without recompilation
 
     Raises [Invalid_argument] if input shapes or dtypes change after capture. *)
@@ -392,16 +449,18 @@ type jit_traced = Jit.traced = {
 (** Result of tracing a function through the JIT capture handler. *)
 
 val trace_graph :
-  device:Tolk.Device.t ->
+  device:Device.t ->
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   jit_traced
 (** [trace_graph ~device f x] traces [f] applied to [x], capturing the
     computation graph without executing it.
 
-    Returns the tensor graph, kernel graph, and rendered source for each
-    kernel. Useful for debugging what the JIT produces, inspecting
-    gradient graphs, or comparing against reference implementations. *)
+    Returns the tensor graph, kernel graph, and rendered source for each kernel.
+    Useful for debugging what the Tolk JIT produces, inspecting gradient graphs,
+    or comparing against reference implementations.
+
+    Raises [Invalid_argument] for PJRT devices. *)
 
 (** {1:debug Debugging} *)
 

@@ -12,7 +12,6 @@ depends: [
   "dune" {>= "3.21"}
   "dune-configurator" {build}
   "nx"
-  "rune"
   "kaun" {with-test}
 ]
 build: [

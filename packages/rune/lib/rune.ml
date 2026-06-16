@@ -71,6 +71,9 @@ let vmaps = Vmap.vmaps
 
 (* JIT *)
 
+module Device = Jit.Device
+module Backend = Backend
+
 let jit ?device f = Jit.trace ?device f
 
 type jit_traced = Jit.traced = {

@@ -107,6 +107,7 @@
   (dune-configurator :build)
   (nx
    (= :version))
+  rune-pjrt
   (tolk
    (= :version))
   (windtrap :with-test)

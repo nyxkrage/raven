@@ -30,7 +30,9 @@ let check_close name expected actual =
 
 let test_jit_cpu_executes () =
   let x = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let f = Rune_pjrt.jit ~backend:`Cpu (fun t -> Nx.add (Nx.mul t t) (Nx.sin t)) in
+  let f =
+    Rune_pjrt.jit ~backend:`Cpu (fun t -> Nx.add (Nx.mul t t) (Nx.sin t))
+  in
   let expected = Nx.add (Nx.mul x x) (Nx.sin x) in
   let actual = f x in
   check_close "jit_cpu_executes" expected actual
@@ -43,8 +45,15 @@ let test_jit_cpu_argmax_executes () =
   let f = Rune_pjrt.jit ~backend:`Cpu (fun t -> Nx.argmax ~axis:1 t) in
   let expected = Nx.argmax ~axis:1 x |> Nx.to_array in
   let actual = f x |> Nx.to_array in
-  if actual <> expected then
-    failwith "jit_cpu_argmax_executes: mismatch"
+  if actual <> expected then failwith "jit_cpu_argmax_executes: mismatch"
+
+let test_rune_jit_pjrt_cpu_executes () =
+  let x = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let device = Rune.Device.pjrt (Rune_pjrt.Device.cpu ()) in
+  let f = Rune.jit ~device (fun t -> Nx.add t (Nx.scalar Nx.float32 1.0)) in
+  let expected = Nx.add x (Nx.scalar Nx.float32 1.0) in
+  let actual = f x in
+  check_close "rune_jit_pjrt_cpu_executes" expected actual
 
 let test_jit_cuda_executes () =
   let x = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
@@ -59,5 +68,6 @@ let () =
   test_runtime_status ();
   if backend_available `Cpu then (
     test_jit_cpu_executes ();
-    test_jit_cpu_argmax_executes ());
+    test_jit_cpu_argmax_executes ();
+    test_rune_jit_pjrt_cpu_executes ());
   if backend_available `Cuda then test_jit_cuda_executes ()

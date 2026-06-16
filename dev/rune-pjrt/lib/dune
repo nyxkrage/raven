@@ -1,7 +1,7 @@
 (library
  (name rune_pjrt)
  (public_name rune-pjrt)
- (libraries nx nx.core nx.buffer nx.effect rune unix)
+ (libraries nx nx.core nx.buffer nx.effect nx.backend unix)
  (foreign_stubs
   (language c)
   (names rune_pjrt_stubs)

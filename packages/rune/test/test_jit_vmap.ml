@@ -19,8 +19,8 @@ end
 
 let eps = 1e-4
 
-let get_cpu_device () : Tolk.Device.t option =
-  try Some (Tolk_cpu.create "CPU") with _ -> None
+let get_cpu_device () : Rune.Device.t option =
+  try Some (Rune.Device.tolk (Tolk_cpu.create "CPU")) with _ -> None
 
 (* ───── jit(vmap(f)) vs vmap(f) ───── *)
 

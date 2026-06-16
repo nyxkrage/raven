@@ -13,5 +13,4 @@
   dune
   (dune-configurator :build)
   nx
-  rune
   (kaun :with-test)))

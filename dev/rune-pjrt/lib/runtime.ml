@@ -51,6 +51,8 @@ let artifact_dir key =
 
 let plugin_dir = Filename.concat "_build/default/dev/rune-pjrt" "plugins"
 let bazel_root = Filename.concat "_build/default/dev/rune-pjrt" "bazel"
+let plugin_path_env = "RUNE_PJRT_PLUGIN_PATH"
+let plugin_search_max_depth = 6
 
 let plugin_name : Backend.t -> string = function
   | `Cpu -> "pjrt_c_api_cpu_plugin.so"
@@ -62,6 +64,37 @@ let plugin_record_path backend =
 let bazel_plugin_path backend =
   Filename.concat "vendor/xla/bazel-bin/xla/pjrt/c" (plugin_name backend)
 
+let expand_home path =
+  let len = String.length path in
+  if len = 0 || path.[0] <> '~' then path
+  else
+    match Sys.getenv_opt "HOME" with
+    | None | Some "" -> path
+    | Some home ->
+        if len = 1 then home
+        else if path.[1] = '/' then home ^ String.sub path 1 (len - 1)
+        else path
+
+let plugin_search_entries () =
+  match Sys.getenv_opt plugin_path_env with
+  | None -> []
+  | Some entries ->
+      entries |> String.split_on_char ':' |> List.map String.trim
+      |> List.filter (fun entry -> entry <> "")
+      |> List.map expand_home
+
+let is_directory path = try Sys.is_directory path with Sys_error _ -> false
+
+let realpath_opt path =
+  try Some (Unix.realpath path) with Unix.Unix_error _ -> None
+
+let existing_file path =
+  if Sys.file_exists path && not (is_directory path) then
+    match realpath_opt path with
+    | Some resolved -> Some resolved
+    | None -> Some path
+  else None
+
 let read_path path =
   if not (Sys.file_exists path) then None
   else
@@ -69,31 +102,77 @@ let read_path path =
     Fun.protect
       (fun () ->
         let line = input_line ic |> String.trim in
-        if line = "" then None else Some line)
+        if line = "" then None else Some (expand_home line))
       ~finally:(fun () -> close_in ic)
 
-let realpath_opt path =
-  try Some (Unix.realpath path) with Unix.Unix_error _ -> None
+let resolve_record_path path =
+  match read_path path with Some path -> existing_file path | None -> None
 
-let resolved_plugin_path backend =
-  let recorded =
-    match read_path (plugin_record_path backend) with
-    | Some path when Sys.file_exists path -> Some path
+let resolve_plugin_entry backend entry =
+  let name = plugin_name backend in
+  if is_directory entry then
+    let record = Filename.concat entry (name ^ ".path") in
+    match resolve_record_path record with
+    | Some path -> Some path
+    | None -> existing_file (Filename.concat entry name)
+  else
+    match Filename.basename entry with
+    | basename when basename = name ^ ".path" -> resolve_record_path entry
+    | basename when basename = name -> existing_file entry
     | _ -> None
-  in
-  match recorded with
+
+let sorted_readdir path =
+  try Sys.readdir path |> Array.to_list |> List.sort String.compare
+  with Sys_error _ -> []
+
+let rec find_plugin_under backend ~depth dir =
+  match resolve_plugin_entry backend dir with
   | Some path -> Some path
   | None ->
-      (match realpath_opt (bazel_plugin_path backend) with
-      | Some path when Sys.file_exists path -> Some path
-      | _ ->
-          let copied = Filename.concat plugin_dir (plugin_name backend) in
-          if Sys.file_exists copied then Some copied else None)
+      if depth = 0 then None
+      else
+        sorted_readdir dir
+        |> List.find_map (fun entry ->
+            let path = Filename.concat dir entry in
+            if is_directory path then
+              find_plugin_under backend ~depth:(depth - 1) path
+            else resolve_plugin_entry backend path)
+
+let env_plugin_path backend =
+  plugin_search_entries ()
+  |> List.find_map (fun entry ->
+      match resolve_plugin_entry backend entry with
+      | Some path -> Some path
+      | None ->
+          if is_directory entry then
+            find_plugin_under backend ~depth:plugin_search_max_depth entry
+          else None)
+
+let resolved_plugin_path backend =
+  match env_plugin_path backend with
+  | Some path -> Some path
+  | None -> (
+      let recorded =
+        match read_path (plugin_record_path backend) with
+        | Some path -> existing_file path
+        | None -> None
+      in
+      match recorded with
+      | Some path -> Some path
+      | None -> (
+          match existing_file (bazel_plugin_path backend) with
+          | Some path -> Some path
+          | None ->
+              let copied = Filename.concat plugin_dir (plugin_name backend) in
+              existing_file copied))
 
 let plugin_path backend =
   match resolved_plugin_path backend with
   | Some path -> path
-  | None -> Filename.concat plugin_dir (plugin_name backend)
+  | None -> (
+      match plugin_search_entries () with
+      | entry :: _ -> Filename.concat entry (plugin_name backend)
+      | [] -> Filename.concat plugin_dir (plugin_name backend))
 
 let has_prefix ~prefix s =
   let prefix_len = String.length prefix in

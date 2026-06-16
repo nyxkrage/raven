@@ -15,7 +15,7 @@ let write_actual dir name content =
   output_char oc '\n';
   close_out oc
 
-let dev = Tolk_cpu.create "CPU"
+let dev = Rune.Device.tolk (Tolk_cpu.create "CPU")
 
 let trace_source f x =
   let traced = Rune.trace_graph ~device:dev f x in

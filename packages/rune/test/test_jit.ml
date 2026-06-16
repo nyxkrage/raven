@@ -59,8 +59,8 @@ let test_jit_warmup_calls_f () =
 (* To test the full pipeline, we need a Tolk device. The CPU device is available
    via tolk.cpu. These tests will only run when a device is available. *)
 
-let get_cpu_device () : Tolk.Device.t option =
-  try Some (Tolk_cpu.create "CPU") with _ -> None
+let get_cpu_device () : Rune.Device.t option =
+  try Some (Rune.Device.tolk (Tolk_cpu.create "CPU")) with _ -> None
 
 let test_jit_capture_compiles () =
   match get_cpu_device () with

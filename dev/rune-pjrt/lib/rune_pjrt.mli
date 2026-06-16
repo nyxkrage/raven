@@ -1,5 +1,6 @@
 module Backend = Backend
 module Causal_lm = Causal_lm
+module Device = Device
 module Error = Error
 module Ir = Ir
 module Runtime = Runtime

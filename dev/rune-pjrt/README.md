@@ -37,15 +37,15 @@ The helper records the real Bazel-built plugin path under
 artifact in place. This matters for the CUDA plugin, which relies on the
 original Bazel output location for its loader `RUNPATH`.
 
+You can also point the runtime at plugins outside `_build/` with
+`RUNE_PJRT_PLUGIN_PATH`. The value is a colon-separated search path; entries may
+be plugin directories, direct plugin files, `.path` files, or package roots with
+plugins below them.
+
 See [VENDORING.md](VENDORING.md) for the intended source layout.
 
 ## Examples
 
-Small user-facing examples live under [`examples/`](examples):
-
-- `01-inference`: greedy decoding through `Rune_pjrt.Causal_lm.greedy_decode`
-- `02-training`: a compiled training step using `Rune.value_and_grads`
-- `03-lora`: frozen-base adaptation with a low-rank update
-
-The larger end-to-end GPT-2 example still lives in
+User-facing examples that select PJRT through the Rune device API live with the
+`rune` package. The larger end-to-end GPT-2 example still lives in
 `packages/kaun/examples/04-gpt2/pjrt/`.

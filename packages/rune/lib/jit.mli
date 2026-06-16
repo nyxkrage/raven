@@ -17,11 +17,21 @@
       let y3 = f_jit x3 in   (* replay: fast, no recompilation *)
     ]}
 
-    When no device is provided, the JIT captures the graph but falls back to
-    eager execution. Pass [~device] to enable compiled execution. *)
+    Pass [~device] to select the compiled execution backend. *)
+
+module Device : sig
+  type t
+  (** The type for Rune JIT devices. *)
+
+  val tolk : Tolk.Device.t -> t
+  (** [tolk device] uses a Tolk device for JIT execution. *)
+
+  val pjrt : Rune_pjrt.Device.t -> t
+  (** [pjrt device] uses a PJRT device for JIT execution. *)
+end
 
 val trace :
-  ?device:Tolk.Device.t ->
+  ?device:Device.t ->
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   ('c, 'd) Nx.t
@@ -31,8 +41,7 @@ val trace :
     graph on the second call and replays the compiled schedule on subsequent
     calls.
 
-    [device] selects the execution backend. When omitted, the computation graph
-    is still captured but execution falls back to the C backend.
+    [device] selects the execution backend.
 
     Raises [Invalid_argument] if input shapes or dtypes change after capture. *)
 
@@ -49,17 +58,15 @@ type traced = {
 (** Result of tracing a function through the JIT capture handler. *)
 
 val trace_graph :
-  device:Tolk.Device.t ->
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  traced
+  device:Device.t -> (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> traced
 (** [trace_graph ~device f x] traces [f] applied to [x], capturing the
     computation graph without executing it.
 
-    Returns the tensor graph, kernel graph, and rendered source for
-    each kernel.  Useful for debugging what the JIT produces,
-    inspecting gradient graphs, or comparing against reference
-    implementations. *)
+    Returns the tensor graph, kernel graph, and rendered source for each kernel.
+    Useful for debugging what the Tolk JIT produces, inspecting gradient graphs,
+    or comparing against reference implementations.
+
+    Raises [Invalid_argument] for PJRT devices. *)
 
 val reset : unit -> unit
 (** [reset ()] clears the JIT cache, forcing recompilation on the next call. *)

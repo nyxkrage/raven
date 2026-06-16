@@ -5,6 +5,7 @@
 
 module Backend = Backend
 module Causal_lm = Causal_lm
+module Device = Device
 module Error = Error
 module Ir = Ir
 module Runtime = Runtime
@@ -16,7 +17,6 @@ type packed = Trace.packed = Tensor : ('a, 'b) Nx.t -> packed
 
 let backend_available = Runtime.backend_available
 let status = Runtime.status
-
 let pack_tensor (type a b) (t : (a, b) Nx.t) = Trace.Tensor t
 let unpack_tensor (Trace.Tensor t) = Obj.magic t
 
@@ -32,9 +32,7 @@ let jits_packed ?(backend = `Cuda) ?(device_id = 0) f =
           let typed_inputs = List.map unpack_tensor inputs in
           let capture =
             Trace.capture_many ~name:"jit"
-              (fun xs ->
-                f (List.map pack_tensor xs)
-                |> List.map unpack_tensor)
+              (fun xs -> f (List.map pack_tensor xs) |> List.map unpack_tensor)
               typed_inputs
           in
           let compiled =
@@ -49,8 +47,7 @@ let jits_packed ?(backend = `Cuda) ?(device_id = 0) f =
 let jits ?(backend = `Cuda) ?(device_id = 0) f =
   let packed =
     jits_packed ~backend ~device_id (fun inputs ->
-        f (List.map unpack_tensor inputs)
-        |> List.map pack_tensor)
+        f (List.map unpack_tensor inputs) |> List.map pack_tensor)
   in
   fun inputs ->
     packed (List.map pack_tensor inputs)
@@ -59,11 +56,7 @@ let jits ?(backend = `Cuda) ?(device_id = 0) f =
 let jit ?backend ?device_id f =
   let many =
     jits ?backend ?device_id (fun inputs ->
-        match inputs with
-        | [ x ] -> [ f x ]
-        | _ -> assert false)
+        match inputs with [ x ] -> [ f x ] | _ -> assert false)
   in
   fun input ->
-    match many [ input ] with
-    | [ output ] -> output
-    | _ -> assert false
+    match many [ input ] with [ output ] -> output | _ -> assert false
