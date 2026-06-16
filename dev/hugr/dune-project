@@ -1,0 +1,17 @@
+(lang dune 3.21)
+
+(name hugr)
+
+(package
+ (name hugr)
+ (synopsis "Experimental full model architectures for Raven")
+ (description
+  "Hugr is an experimental model architecture package for Raven. It contains complete neural network architectures such as GPT-2, with room for Llama, Qwen, DeepSeek-V3, and other full models built on Kaun and Rune.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  nx
+  rune
+  kaun
+  jsont))

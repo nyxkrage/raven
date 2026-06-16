@@ -1,0 +1,5 @@
+(library
+ (name hugr_gpt2)
+ (public_name hugr.gpt2)
+ (private_modules layer_util)
+ (libraries nx nx.core rune kaun kaun.hf jsont))
