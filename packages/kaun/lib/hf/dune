@@ -1,4 +1,11 @@
 (library
  (name kaun_hf)
  (public_name kaun.hf)
+ (modules kaun_hf)
  (libraries unix rune nx nx.io kaun jsont jsont.bytesrw))
+
+(test
+ (name test_cache_layout)
+ (package kaun)
+ (modules test_cache_layout)
+ (libraries kaun_hf windtrap unix))

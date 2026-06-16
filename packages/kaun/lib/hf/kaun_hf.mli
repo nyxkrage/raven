@@ -46,10 +46,16 @@ val download_file :
     [token] is a HuggingFace API token for private repositories. Defaults to the
     value of [HF_TOKEN].
 
-    [cache_dir] defaults to [{RAVEN_CACHE_ROOT}/huggingface], or
-    [{XDG_CACHE_HOME}/raven/huggingface] when unset.
+    [cache_dir] defaults to the regular HuggingFace Hub cache: [HF_HUB_CACHE],
+    then [HUGGINGFACE_HUB_CACHE], then [{HF_HOME}/hub], then
+    [{XDG_CACHE_HOME}/huggingface/hub].
 
-    [offline] defaults to [false]. When [true], only cached files are returned.
+    Files are stored using the Hub cache layout
+    [models--org--repo/{refs,snapshots,blobs}] so Kaun shares downloads with
+    [huggingface_hub] and Transformers.
+
+    [offline] defaults to [true] when [HF_HUB_OFFLINE] or [TRANSFORMERS_OFFLINE]
+    is set, and [false] otherwise. When [true], only cached files are returned.
 
     [revision] defaults to {!Main}.
 
@@ -100,6 +106,8 @@ val load_weights :
 (** {1:cache Cache management} *)
 
 val clear_cache : ?cache_dir:string -> ?model_id:string -> unit -> unit
-(** [clear_cache ()] removes all cached files.
+(** [clear_cache ()] removes the selected HuggingFace Hub cache directory.
 
-    When [model_id] is given, only that model's cache is removed. *)
+    Without [model_id], this removes the whole [cache_dir], which defaults to
+    the shared HuggingFace Hub cache. When [model_id] is given, only that
+    model's cache folder is removed. *)
