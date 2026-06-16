@@ -340,6 +340,29 @@ let update_ref ~storage ~revision ~commit_hash =
   if not (is_commit_hash revision) then
     write_file (ref_path ~storage ~revision) commit_hash
 
+(* Xet download *)
+
+let xet_available () =
+  try
+    ignore (Xet.version ());
+    true
+  with Failure _ | Invalid_argument _ -> false
+
+let download_file_via_xet ?token ?(revision = Main) ~model_id ~filename
+    ~destination () =
+  Xet.download_hf_file ?token
+    ~repo_id:model_id ~filename
+    ~revision:(revision_string revision)
+    ~destination ~repo_type:Model ()
+
+let try_xet_download ?token ~revision ~model_id ~filename ~destination () =
+  if not (xet_available ()) then None
+  else
+    try
+      let _json = download_file_via_xet ?token ~revision ~model_id ~filename ~destination () in
+      if Sys.file_exists destination then Some destination else None
+    with Failure _ -> None
+
 (* Downloading *)
 
 let download_file ?token ?cache_dir ?offline ?(revision = Main) ~model_id
@@ -354,34 +377,41 @@ let download_file ?token ?cache_dir ?offline ?(revision = Main) ~model_id
   | Some path -> path
   | None when offline -> failwith (err_offline model_id filename)
   | None -> begin
-      let url = hub_url ~model_id ~revision ~filename in
-      let headers = auth_headers token in
-      let metadata = fetch_metadata ~headers ~url in
-      let blob = blob_path ~storage ~etag:metadata.etag in
-      let pointer =
-        snapshot_path ~storage ~commit_hash:metadata.commit_hash ~filename
+      let xet_destination =
+        snapshot_path ~storage ~commit_hash:"xet" ~filename
       in
-      mkdir_p (Filename.dirname blob);
-      mkdir_p (Filename.dirname pointer);
-      if not (Sys.file_exists blob) then (
-        let incomplete = blob ^ ".incomplete" in
-        try
-          curl_download ~headers ~url ~dest:incomplete ();
-          (match metadata.size with
-          | Some expected ->
-              let actual = (Unix.stat incomplete).st_size in
-              if actual <> expected then
-                failwith
-                  (Printf.sprintf "Downloaded %s has size %d, expected %d" url
-                     actual expected)
-          | None -> ());
-          Sys.rename incomplete blob
-        with e ->
-          (try Sys.remove incomplete with Sys_error _ -> ());
-          raise e);
-      update_ref ~storage ~revision ~commit_hash:metadata.commit_hash;
-      create_pointer ~blob ~pointer ~filename ~etag:metadata.etag;
-      pointer
+      match try_xet_download ?token ~revision ~model_id ~filename ~destination:xet_destination () with
+      | Some path -> path
+      | None -> begin
+          let url = hub_url ~model_id ~revision ~filename in
+          let headers = auth_headers token in
+          let metadata = fetch_metadata ~headers ~url in
+          let blob = blob_path ~storage ~etag:metadata.etag in
+          let pointer =
+            snapshot_path ~storage ~commit_hash:metadata.commit_hash ~filename
+          in
+          mkdir_p (Filename.dirname blob);
+          mkdir_p (Filename.dirname pointer);
+          if not (Sys.file_exists blob) then (
+            let incomplete = blob ^ ".incomplete" in
+            try
+              curl_download ~headers ~url ~dest:incomplete ();
+              (match metadata.size with
+              | Some expected ->
+                  let actual = (Unix.stat incomplete).st_size in
+                  if actual <> expected then
+                    failwith
+                      (Printf.sprintf "Downloaded %s has size %d, expected %d"
+                         url actual expected)
+              | None -> ());
+              Sys.rename incomplete blob
+            with e ->
+              (try Sys.remove incomplete with Sys_error _ -> ());
+              raise e);
+          update_ref ~storage ~revision ~commit_hash:metadata.commit_hash;
+          create_pointer ~blob ~pointer ~filename ~etag:metadata.etag;
+          pointer
+        end
     end
 
 (* JSON helpers *)

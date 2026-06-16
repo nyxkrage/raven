@@ -2,7 +2,7 @@
  (name kaun_hf)
  (public_name kaun.hf)
  (modules kaun_hf)
- (libraries unix rune nx nx.io kaun jsont jsont.bytesrw))
+ (libraries unix rune nx nx.io kaun jsont jsont.bytesrw xet))
 
 (test
  (name test_cache_layout)

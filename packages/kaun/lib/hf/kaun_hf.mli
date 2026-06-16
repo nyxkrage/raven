@@ -59,6 +59,11 @@ val download_file :
 
     [revision] defaults to {!Main}.
 
+    When the [xet] package is available, Xet is tried first so Xet-backed
+    repositories on the Hub download through the native Xet path. If Xet is
+    unavailable or the file is not served via Xet, the function falls back to
+    a regular HTTP download into the Hub cache layout.
+
     Raises [Failure] if the download fails or the file is not cached in offline
     mode. *)
 
