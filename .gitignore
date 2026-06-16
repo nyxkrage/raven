@@ -26,6 +26,7 @@ dev/rune-pjrt/bench/__pycache__/
 
 # Local vendored source checkouts
 vendor/xla/
+vendor/xet-core/
 
 # Environment variable files
 .env

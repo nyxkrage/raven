@@ -1,0 +1,15 @@
+(lang dune 3.21)
+
+(name xet)
+
+(using directory-targets 0.1)
+
+(package
+ (name xet)
+ (synopsis "Experimental OCaml bindings for Hugging Face Xet")
+ (description
+  "Xet is an experimental OCaml wrapper around huggingface/xet-core for chunk-based hashing, deduplication, upload, and download infrastructure.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune))
