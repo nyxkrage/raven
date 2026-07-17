@@ -1589,6 +1589,10 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   invalid_arg
                     "in-place mutation (set_item, set_slice, blit, assign) \
                      cannot be used inside vmap — use scatter instead")
+          | Rune_pjrt.Ffi.Internal.Call _ ->
+              Some
+                (fun k ->
+                  continue k Rune_pjrt.Ffi.Internal.Use_fallback)
           (* Let other operations pass through *)
           | _ -> None);
   }

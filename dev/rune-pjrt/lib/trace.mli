@@ -7,12 +7,14 @@ type capture = {
 
 val capture_many :
   ?name:string ->
+  ?enable_ffi:bool ->
   (('a, 'b) Nx.t list -> ('c, 'd) Nx.t list) ->
   ('a, 'b) Nx.t list ->
   capture
 
 val capture_one :
   ?name:string ->
+  ?enable_ffi:bool ->
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   capture

@@ -1,0 +1,5 @@
+(library
+ (name ppx_rune_kernel)
+ (public_name ppx_rune_kernel)
+ (kind ppx_rewriter)
+ (libraries ppxlib))

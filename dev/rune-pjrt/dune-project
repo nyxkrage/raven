@@ -13,4 +13,18 @@
   dune
   (dune-configurator :build)
   nx
-  (kaun :with-test)))
+  (kaun :with-test)
+  (ppx_rune_kernel :with-test)
+  (tolk :with-test)))
+
+(package
+ (name ppx_rune_kernel)
+ (synopsis "PPX syntax for experimental Rune PJRT CUDA kernels")
+ (description
+  "Ppx_rune_kernel rewrites annotated Rune functions into PJRT CUDA custom calls with ordinary Rune fallbacks.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  (ppxlib
+   (>= 0.38.0))))

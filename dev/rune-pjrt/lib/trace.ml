@@ -12,14 +12,22 @@ type binding = Binding : ('a, 'b) Nx.t * Ir.node_id -> binding
 
 type env = {
   name : string option;
+  enable_ffi : bool;
   mutable next_id : int;
   mutable nodes_rev : Ir.node list;
   mutable bindings : binding list;
   mutable inputs_rev : Ir.node_id list;
 }
 
-let create_env ?name () =
-  { name; next_id = 0; nodes_rev = []; bindings = []; inputs_rev = [] }
+let create_env ?name ?(enable_ffi = true) () =
+  {
+    name;
+    enable_ffi;
+    next_id = 0;
+    nodes_rev = [];
+    bindings = [];
+    inputs_rev = [];
+  }
 
 let same_tensor (type a b c d) (a : (a, b) Nx.t) (b : (c, d) Nx.t) =
   Obj.repr a == Obj.repr b
@@ -139,6 +147,30 @@ let handler env =
               Error.raise (Error.Unsupported_effect name))
         in
         match eff with
+        | Ffi.Internal.Call request when env.enable_ffi ->
+            Some
+              (fun (k : (a, _) Effect.Deep.continuation) ->
+                let output = request.fallback () in
+                let inputs =
+                  List.map
+                    (fun (Ffi.Tensor input) -> ensure_id env input)
+                    request.inputs
+                in
+                let ffi_handler = request.handler in
+                let identity = Ffi.Internal.identity ffi_handler in
+                let handler : Ir.ffi_handler =
+                  {
+                    library = identity.library;
+                    library_digest = identity.library_digest;
+                    symbol = ffi_handler.symbol;
+                    target = identity.target;
+                  }
+                in
+                ignore
+                  (bind_node env output (Ir.Custom_call { handler; inputs }));
+                Effect.Deep.continue k (Ffi.Internal.Use_kernel output))
+        | Ffi.Internal.Call _ ->
+            Some (fun k -> Effect.Deep.continue k Ffi.Internal.Use_fallback)
         | E_view t ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
@@ -439,7 +471,7 @@ let handler env =
         | E_eig _ -> unsupported "eig"
         | E_eigh _ -> unsupported "eigh"
         | E_triangular_solve _ -> unsupported "triangular_solve"
-        | _ -> unsupported "unknown_effect");
+        | _ -> None);
   }
 
 let finalize env outputs =
@@ -470,8 +502,8 @@ let finalize env outputs =
     outputs;
   }
 
-let capture_many ?name f inputs =
-  let env = create_env ?name () in
+let capture_many ?name ?(enable_ffi = true) f inputs =
+  let env = create_env ?name ~enable_ffi () in
   List.iteri (register_parameter env) inputs;
   let outputs =
     Effect.Deep.match_with
@@ -480,7 +512,7 @@ let capture_many ?name f inputs =
   in
   finalize env outputs
 
-let capture_one ?name f input =
-  capture_many ?name
+let capture_one ?name ?(enable_ffi = true) f input =
+  capture_many ?name ~enable_ffi
     (fun inputs -> match inputs with [ x ] -> [ f x ] | _ -> assert false)
     [ input ]

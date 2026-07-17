@@ -7,6 +7,7 @@ module Backend = Backend
 module Causal_lm = Causal_lm
 module Device = Device
 module Error = Error
+module Ffi = Ffi
 module Ir = Ir
 module Runtime = Runtime
 module Signature = Signature
@@ -31,7 +32,7 @@ let jits_packed ?(backend = `Cuda) ?(device_id = 0) f =
       | None ->
           let typed_inputs = List.map unpack_tensor inputs in
           let capture =
-            Trace.capture_many ~name:"jit"
+            Trace.capture_many ~name:"jit" ~enable_ffi:(backend = `Cuda)
               (fun xs -> f (List.map pack_tensor xs) |> List.map unpack_tensor)
               typed_inputs
           in

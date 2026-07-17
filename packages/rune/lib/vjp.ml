@@ -1118,6 +1118,8 @@ let make_handler tape seed_output =
               twg_in.grad <- T.add twg_in.grad grad_contrib;
               fwd)
       (* Custom differentiation *)
+      | Rune_pjrt.Ffi.Internal.Call _ ->
+          Some (fun k -> continue k Rune_pjrt.Ffi.Internal.Use_fallback)
       | Autodiff.E_ad_mode_query -> Some (fun k -> continue k `VJP)
       | Autodiff.E_custom_vjp { cv_fwd; cv_bwd } ->
           Some

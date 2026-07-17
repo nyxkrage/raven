@@ -1,7 +1,7 @@
 opam-version: "2.0"
-synopsis: "Experimental PJRT/XLA JIT backend for Rune"
+synopsis: "PPX syntax for experimental Rune PJRT CUDA kernels"
 description:
-  "Rune-pjrt is an experimental PJRT/XLA JIT backend for Rune. It traces Rune programs, lowers them to StableHLO, and executes them through PJRT on CPU and CUDA."
+  "Ppx_rune_kernel rewrites annotated Rune functions into PJRT CUDA custom calls with ordinary Rune fallbacks."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio"]
 license: "ISC"
@@ -10,11 +10,7 @@ bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21"}
-  "dune-configurator" {build}
-  "nx"
-  "kaun" {with-test}
-  "ppx_rune_kernel" {with-test}
-  "tolk" {with-test}
+  "ppxlib" {>= "0.38.0"}
 ]
 build: [
   ["dune" "subst"] {dev}

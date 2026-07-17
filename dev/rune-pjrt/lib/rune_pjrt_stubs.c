@@ -16,6 +16,7 @@
 
 #ifdef RUNE_PJRT_VENDOR_XLA
 #include "xla/pjrt/c/pjrt_c_api.h"
+#include "xla/pjrt/c/pjrt_c_api_ffi_extension.h"
 
 typedef const PJRT_Api* (*rune_get_pjrt_api_fn)(void);
 
@@ -36,6 +37,19 @@ typedef struct rune_exec_cache {
 } rune_exec_cache;
 
 static rune_exec_cache* rune_exec_cache_head = NULL;
+
+typedef struct rune_ffi_registration {
+  char* plugin_path;
+  char* library_path;
+  char* library_digest;
+  char* symbol;
+  char* target;
+  void* plugin_handle;
+  void* library_handle;
+  struct rune_ffi_registration* next;
+} rune_ffi_registration;
+
+static rune_ffi_registration* rune_ffi_registration_head = NULL;
 
 static char* rune_dup_bytes(const char* src, size_t len) {
   char* dst = malloc(len + 1);
@@ -234,6 +248,159 @@ static char* rune_load_pjrt_error(const char* prefix, const char* detail) {
   memcpy(msg + a + 2, detail, b);
   msg[a + 2 + b] = '\0';
   return msg;
+}
+
+CAMLprim value caml_rune_pjrt_register_ffi_handler(
+    value v_plugin_path, value v_library_path, value v_library_digest,
+    value v_symbol, value v_target) {
+  CAMLparam5(v_plugin_path, v_library_path, v_library_digest, v_symbol,
+             v_target);
+  const char* plugin_path = String_val(v_plugin_path);
+  const char* library_path = String_val(v_library_path);
+  const char* library_digest = String_val(v_library_digest);
+  const char* symbol = String_val(v_symbol);
+  const char* target = String_val(v_target);
+  rune_ffi_registration* registration = rune_ffi_registration_head;
+  void* plugin_handle = NULL;
+  void* library_handle = NULL;
+  rune_get_pjrt_api_fn get_api = NULL;
+  const PJRT_Api* api = NULL;
+  const PJRT_Extension_Base* extension = NULL;
+  const PJRT_FFI* ffi = NULL;
+  PJRT_FFI_Register_Handler_Args args;
+  PJRT_Error* error = NULL;
+  char* error_message = NULL;
+  void* handler = NULL;
+
+  while (registration != NULL) {
+    if (strcmp(registration->plugin_path, plugin_path) == 0 &&
+        strcmp(registration->target, target) == 0) {
+      if (strcmp(registration->library_digest, library_digest) != 0 ||
+          strcmp(registration->symbol, symbol) != 0) {
+        caml_failwith(
+            "PJRT FFI target is already registered to a different handler");
+      }
+      CAMLreturn(Val_unit);
+    }
+    if (strcmp(registration->plugin_path, plugin_path) == 0 &&
+        strcmp(registration->library_path, library_path) == 0 &&
+        strcmp(registration->library_digest, library_digest) != 0) {
+      caml_failwith(
+          "PJRT FFI library changed after it was loaded; restart the process "
+          "or use a content-addressed filename");
+    }
+    registration = registration->next;
+  }
+
+  plugin_handle = dlopen(plugin_path, RTLD_NOW | RTLD_LOCAL);
+  if (plugin_handle == NULL) {
+    error_message = rune_load_pjrt_error("PJRT plugin dlopen failed", dlerror());
+    goto fail;
+  }
+
+  dlerror();
+  get_api = (rune_get_pjrt_api_fn)dlsym(plugin_handle, "GetPjrtApi");
+  {
+    const char* detail = dlerror();
+    if (detail != NULL || get_api == NULL) {
+      error_message = rune_load_pjrt_error(
+          "PJRT plugin does not export GetPjrtApi",
+          detail != NULL ? detail : "symbol not found");
+      goto fail;
+    }
+  }
+
+  api = get_api();
+  if (api == NULL) {
+    error_message = rune_dup_cstr("GetPjrtApi returned NULL");
+    goto fail;
+  }
+
+  extension = api->extension_start;
+  while (extension != NULL && extension->type != PJRT_Extension_Type_FFI) {
+    extension = extension->next;
+  }
+  if (extension == NULL) {
+    error_message = rune_dup_cstr("PJRT plugin does not expose the FFI extension");
+    goto fail;
+  }
+  ffi = (const PJRT_FFI*)extension;
+  if (ffi->base.struct_size < PJRT_FFI_Extension_STRUCT_SIZE ||
+      ffi->register_handler == NULL) {
+    error_message = rune_dup_cstr("PJRT FFI extension has no register_handler");
+    goto fail;
+  }
+
+  library_handle = dlopen(library_path, RTLD_NOW | RTLD_LOCAL);
+  if (library_handle == NULL) {
+    error_message = rune_load_pjrt_error("FFI library dlopen failed", dlerror());
+    goto fail;
+  }
+
+  dlerror();
+  handler = dlsym(library_handle, symbol);
+  {
+    const char* detail = dlerror();
+    if (detail != NULL || handler == NULL) {
+      error_message = rune_load_pjrt_error(
+          "FFI handler symbol lookup failed",
+          detail != NULL ? detail : "symbol not found");
+      goto fail;
+    }
+  }
+
+  registration = malloc(sizeof(*registration));
+  if (registration == NULL) {
+    error_message = rune_dup_cstr("failed to allocate PJRT FFI registration");
+    goto fail;
+  }
+  memset(registration, 0, sizeof(*registration));
+  registration->plugin_path = rune_dup_cstr(plugin_path);
+  registration->library_path = rune_dup_cstr(library_path);
+  registration->library_digest = rune_dup_cstr(library_digest);
+  registration->symbol = rune_dup_cstr(symbol);
+  registration->target = rune_dup_cstr(target);
+  if (registration->plugin_path == NULL ||
+      registration->library_path == NULL ||
+      registration->library_digest == NULL || registration->symbol == NULL ||
+      registration->target == NULL) {
+    error_message = rune_dup_cstr("failed to copy PJRT FFI registration");
+    goto fail;
+  }
+
+  memset(&args, 0, sizeof(args));
+  args.struct_size = PJRT_FFI_Register_Handler_Args_STRUCT_SIZE;
+  args.target_name = target;
+  args.target_name_size = strlen(target);
+  args.handler = handler;
+  args.platform_name = "CUDA";
+  args.platform_name_size = 4;
+  args.traits = (PJRT_FFI_Handler_TraitsBits)0;
+  error = ffi->register_handler(&args);
+  if (error != NULL) {
+    error_message = rune_pjrt_error_message(api, error);
+    goto fail;
+  }
+
+  registration->plugin_handle = plugin_handle;
+  registration->library_handle = library_handle;
+  registration->next = rune_ffi_registration_head;
+  rune_ffi_registration_head = registration;
+  CAMLreturn(Val_unit);
+
+fail:
+  if (registration != NULL) {
+    free(registration->plugin_path);
+    free(registration->library_path);
+    free(registration->library_digest);
+    free(registration->symbol);
+    free(registration->target);
+    free(registration);
+  }
+  if (library_handle != NULL) dlclose(library_handle);
+  if (plugin_handle != NULL) dlclose(plugin_handle);
+  caml_failwith(error_message != NULL ? error_message
+                                     : "PJRT FFI registration failed");
 }
 
 static char* rune_await_event(const PJRT_Api* api, PJRT_Event* event) {
@@ -813,6 +980,17 @@ CAMLprim value caml_rune_pjrt_execute_bc(value* argv, int argn) {
 }
 
 #else
+
+CAMLprim value caml_rune_pjrt_register_ffi_handler(
+    value v_plugin_path, value v_library_path, value v_library_digest,
+    value v_symbol, value v_target) {
+  (void)v_plugin_path;
+  (void)v_library_path;
+  (void)v_library_digest;
+  (void)v_symbol;
+  (void)v_target;
+  caml_failwith("rune-pjrt was built without vendor/xla available");
+}
 
 CAMLprim value caml_rune_pjrt_execute(value v_plugin_path, value v_device_id,
                                       value v_stablehlo, value v_input_dtypes,

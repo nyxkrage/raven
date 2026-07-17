@@ -123,6 +123,16 @@ let pp_bool_array arr =
 let pp_type_list descs =
   descs |> List.map tensor_type |> String.concat ", "
 
+let canonical_layout (desc : Ir.desc) =
+  let rank = Array.length desc.shape in
+  if rank = 0 then "dense<> : tensor<0xindex>"
+  else
+    let minor_to_major =
+      List.init rank (fun axis -> rank - axis - 1)
+      |> List.map string_of_int |> String.concat ", "
+    in
+    Printf.sprintf "dense<[%s]> : tensor<%dxindex>" minor_to_major rank
+
 let output_type program =
   let descs = List.map (fun id -> (find_node program id).Ir.desc) program.Ir.outputs in
   match descs with
@@ -500,6 +510,26 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
            indent node.Ir.id (op_ref ~arg_name program lhs)
            (op_ref ~arg_name program rhs) batching
            contracting (tensor_type lhs_desc) (tensor_type rhs_desc) ty)
+  | Custom_call { handler; inputs } ->
+      let refs =
+        List.map (op_ref ~arg_name program) inputs |> String.concat ", "
+      in
+      let input_descs =
+        List.map (fun id -> (find_node program id).Ir.desc) inputs
+      in
+      let input_types =
+        List.map tensor_type input_descs |> String.concat ", "
+      in
+      let operand_layouts =
+        List.map canonical_layout input_descs |> String.concat ", "
+      in
+      Some
+        (Printf.sprintf
+           "%s%%v%d = \"stablehlo.custom_call\"(%s) {api_version = 4 : i32, \
+            backend_config = {}, call_target_name = %S, operand_layouts = \
+            [%s], result_layouts = [%s]} : (%s) -> %s"
+           indent node.Ir.id refs handler.target operand_layouts
+           (canonical_layout node.Ir.desc) input_types ty)
   | Cat { inputs; axis } ->
       let refs =
         List.map (op_ref ~arg_name program) inputs |> String.concat ", "

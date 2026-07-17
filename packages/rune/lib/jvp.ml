@@ -675,6 +675,8 @@ let make_handler dual_map =
               register res { primal = res; tangent = tan };
               continue k res)
       (* Custom differentiation *)
+      | Rune_pjrt.Ffi.Internal.Call _ ->
+          Some (fun k -> continue k Rune_pjrt.Ffi.Internal.Use_fallback)
       | Autodiff.E_ad_mode_query -> Some (fun k -> continue k `JVP)
       | Autodiff.E_custom_jvp { cj_jvp } ->
           Some

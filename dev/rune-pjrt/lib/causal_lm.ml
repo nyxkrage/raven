@@ -138,7 +138,10 @@ let compile ~backend ~device_id ~max_tokens
   let tokens_sample : (int32, 'a) Nx.t =
     Obj.magic (Nx.zeros Nx.int32 [| batch; max_seq |])
   in
-  let capture = Trace.capture_one ~name:"causal_lm_forward" forward tokens_sample in
+  let capture =
+    Trace.capture_one ~name:"causal_lm_forward" ~enable_ffi:(backend = `Cuda)
+      forward tokens_sample
+  in
   if List.length capture.program.Ir.inputs <> 1 then
     Error.raise
       (Error.Unsupported_program

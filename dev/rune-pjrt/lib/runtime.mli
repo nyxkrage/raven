@@ -10,6 +10,7 @@ type compiled = {
   module_text : string;
   output_descs : Ir.desc list;
   extra_inputs : (Ir.desc * string) list;
+  mutable ffi_registered : bool;
 }
 
 val is_available : unit -> bool

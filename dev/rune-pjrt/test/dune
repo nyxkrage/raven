@@ -1,3 +1,21 @@
 (tests
- (names test_trace test_gpt2_shape test_runtime)
+ (names test_trace test_ffi test_gpt2_shape test_runtime)
  (libraries rune_pjrt nx rune kaun unix))
+
+(test
+ (name test_ppx)
+ (package rune-pjrt)
+ (modules test_ppx)
+ (libraries rune_pjrt nx rune tolk.cpu)
+ (preprocess
+  (pps ppx_rune_kernel)))
+
+(test
+ (name test_cuda_ffi)
+ (package rune-pjrt)
+ (modules test_cuda_ffi)
+ (enabled_if (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
+ (deps ../kernels/causal_scaled_softmax.so)
+ (libraries rune_pjrt nx rune)
+ (preprocess
+  (pps ppx_rune_kernel)))

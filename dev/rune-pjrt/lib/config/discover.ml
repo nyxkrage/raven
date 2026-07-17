@@ -18,9 +18,15 @@ let rec find_repo_root dir =
 let () =
   C.main ~name:"rune_pjrt_discover" (fun c ->
       let vendor_xla =
-        match find_repo_root (Sys.getcwd ()) with
-        | Some root -> Filename.concat root "vendor/xla"
-        | None -> Filename.concat (Sys.getcwd ()) "vendor/xla"
+        match Sys.getenv_opt "RUNE_PJRT_XLA_SOURCE" with
+        | Some path -> path
+        | None -> (
+            match Sys.getenv_opt "DUNE_SOURCEROOT" with
+            | Some root -> Filename.concat root "vendor/xla"
+            | None -> (
+                match find_repo_root (Sys.getcwd ()) with
+                | Some root -> Filename.concat root "vendor/xla"
+                | None -> Filename.concat (Sys.getcwd ()) "vendor/xla"))
       in
       let include_dir = vendor_xla in
       let c_flags =

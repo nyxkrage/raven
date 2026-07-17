@@ -1,0 +1,16 @@
+(rule
+ (target causal_scaled_softmax.so)
+ (enabled_if (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
+ (deps
+  causal_scaled_softmax.cu
+  (source_tree ../../../vendor/xla/xla/ffi/api))
+ (action
+  (run nvcc
+   -std=c++17
+   -O3
+   -shared
+   -Xcompiler=-fPIC
+   -I%{workspace_root}/vendor/xla
+   %{dep:causal_scaled_softmax.cu}
+   -o
+   %{target})))

@@ -349,6 +349,8 @@ let make_capture_handler ctx =
             let node = T.const cv tdt in
             register ctx out node;
             continue k out)
+    | Rune_pjrt.Ffi.Internal.Call _ ->
+        Some (fun k -> continue k Rune_pjrt.Ffi.Internal.Use_fallback)
     | _ -> None
   in
   { retc = (fun x -> x); exnc = raise; effc }

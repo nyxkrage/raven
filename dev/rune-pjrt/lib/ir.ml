@@ -65,6 +65,13 @@ type binary =
 type reduce = Reduce_sum | Reduce_max | Reduce_min | Reduce_prod
 type arg_reduce = Argmax | Argmin
 
+type ffi_handler = {
+  library : string;
+  library_digest : string;
+  symbol : string;
+  target : string;
+}
+
 type op =
   | Parameter of int
   | Constant of literal
@@ -98,6 +105,7 @@ type op =
   | Cast of { input : node_id; dtype : string }
   | Gather of { data : node_id; indices : node_id; axis : int }
   | Matmul of { lhs : node_id; rhs : node_id }
+  | Custom_call of { handler : ffi_handler; inputs : node_id list }
   | Assign of { dst : node_id; src : node_id }
   | Unsupported of string
 
@@ -153,6 +161,7 @@ let operands = function
   | Cat { inputs; _ } -> inputs
   | Gather { data; indices; _ } -> [ data; indices ]
   | Matmul { lhs; rhs } -> [ lhs; rhs ]
+  | Custom_call { inputs; _ } -> inputs
   | Assign { dst; src } -> [ dst; src ]
 
 let unary_name = function
@@ -226,6 +235,7 @@ let op_name = function
   | Cast _ -> "cast"
   | Gather _ -> "gather"
   | Matmul _ -> "matmul"
+  | Custom_call { handler; _ } -> "custom_call[" ^ handler.target ^ "]"
   | Assign _ -> "assign"
   | Unsupported name -> name
 
@@ -291,6 +301,18 @@ let unsupported_ops (program : program) =
          | Buffer _ -> Some "buffer"
          | _ -> None)
   |> List.sort_uniq String.compare
+
+let ffi_handlers (program : program) =
+  let seen = Hashtbl.create 4 in
+  List.filter_map
+    (fun (node : node) ->
+      match node.op with
+      | Custom_call { handler; _ }
+        when not (Hashtbl.mem seen handler.target) ->
+          Hashtbl.add seen handler.target ();
+          Some handler
+      | _ -> None)
+    program.nodes
 
 let pp_shape ppf shape = Format.fprintf ppf "%s" (Shape.to_string shape)
 
@@ -360,6 +382,8 @@ let pp_node ppf (node : node) =
   | Gather { data; indices; axis } ->
       Format.fprintf ppf "gather(%%%d, %%%d, axis=%d)" data indices axis
   | Matmul { lhs; rhs } -> Format.fprintf ppf "matmul(%%%d, %%%d)" lhs rhs
+  | Custom_call { handler; inputs } ->
+      Format.fprintf ppf "custom_call[%s](%s)" handler.target (pp_inputs inputs)
   | Assign { dst; src } -> Format.fprintf ppf "assign(%%%d, %%%d)" dst src
   | Unsupported name -> Format.fprintf ppf "unsupported(%s)" name
 

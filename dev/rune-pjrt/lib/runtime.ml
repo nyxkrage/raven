@@ -15,6 +15,7 @@ type compiled = {
   module_text : string;
   output_descs : Ir.desc list;
   extra_inputs : (Ir.desc * string) list;
+  mutable ffi_registered : bool;
 }
 
 external native_execute :
@@ -31,6 +32,14 @@ external native_execute :
   output_dtypes:string array ->
   output_shapes:int array array ->
   string array = "caml_rune_pjrt_execute_bc" "caml_rune_pjrt_execute"
+
+external native_register_ffi_handler :
+  plugin_path:string ->
+  library_path:string ->
+  library_digest:string ->
+  symbol:string ->
+  target:string ->
+  unit = "caml_rune_pjrt_register_ffi_handler"
 
 let ensure_dir path =
   let rec loop path =
@@ -347,7 +356,8 @@ let supported_op = function
   | Pad _
   | Cast _
   | Gather _
-  | Matmul _ ->
+  | Matmul _
+  | Custom_call _ ->
       true
   | Reduce _ | Arg_reduce _ | Assign _ | Buffer _ | Unsupported _ ->
       false
@@ -518,6 +528,14 @@ let write_op_json artifact_dir oc node =
         indices axis
   | Matmul { lhs; rhs } ->
       Printf.fprintf oc "{\"tag\":\"matmul\",\"lhs\":%d,\"rhs\":%d}" lhs rhs
+  | Custom_call { handler; inputs } ->
+      Printf.fprintf oc
+        "{\"tag\":\"custom_call\",\"library\":\"%s\",\"symbol\":\"%s\",\
+         \"target\":\"%s\",\"inputs\":"
+        (json_escape handler.library) (json_escape handler.symbol)
+        (json_escape handler.target);
+      write_json_list oc (fun oc x -> output_string oc (string_of_int x)) inputs;
+      output_char oc '}'
   | Assign { dst; src } ->
       Printf.fprintf oc "{\"tag\":\"assign\",\"dst\":%d,\"src\":%d}" dst src
   | Unsupported name ->
@@ -607,6 +625,7 @@ let compile ~backend ~device_id ~signature program output_examples =
     module_text;
     output_descs;
     extra_inputs;
+    ffi_registered = false;
   }
 
 let compile_stablehlo ~backend ~device_id ~signature ~module_text ~output_descs
@@ -641,6 +660,7 @@ let compile_stablehlo ~backend ~device_id ~signature ~module_text ~output_descs
     module_text;
     output_descs;
     extra_inputs;
+    ffi_registered = false;
   }
 
 let tensor_data_string (type a b) (dtype : (a, b) Nx_core.Dtype.t)
@@ -674,6 +694,34 @@ let tensor_of_output desc data =
       Trace.Tensor (Nx.of_buffer buffer ~shape)
 
 let execute compiled inputs =
+  let handlers = Ir.ffi_handlers compiled.program in
+  if handlers <> [] && compiled.backend <> `Cuda then
+    Error.raise
+      (Error.Unsupported_program
+         "typed PJRT FFI custom calls currently require the CUDA backend");
+  if not compiled.ffi_registered then (
+    List.iter
+      (fun (handler : Ir.ffi_handler) ->
+        let identity =
+          Ffi.Internal.identity
+            { library = handler.library; symbol = handler.symbol }
+        in
+        if
+          identity.library_digest <> handler.library_digest
+          || identity.target <> handler.target
+        then
+          Error.raise
+            (Error.Runtime_unavailable
+               (Printf.sprintf
+                  "FFI library %S changed after tracing; retrace with an \
+                   immutable or content-addressed artifact"
+                  handler.library));
+        native_register_ffi_handler ~plugin_path:(plugin_path compiled.backend)
+          ~library_path:identity.library
+          ~library_digest:identity.library_digest ~symbol:handler.symbol
+          ~target:handler.target)
+      handlers;
+    compiled.ffi_registered <- true);
   let constant_input_dtypes =
     List.map (fun ((desc : Ir.desc), _) -> desc.dtype) compiled.extra_inputs
   in

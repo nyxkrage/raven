@@ -60,6 +60,13 @@ type binary =
 type reduce = Reduce_sum | Reduce_max | Reduce_min | Reduce_prod
 type arg_reduce = Argmax | Argmin
 
+type ffi_handler = {
+  library : string;
+  library_digest : string;
+  symbol : string;
+  target : string;
+}
+
 type op =
   | Parameter of int
   | Constant of literal
@@ -93,6 +100,7 @@ type op =
   | Cast of { input : node_id; dtype : string }
   | Gather of { data : node_id; indices : node_id; axis : int }
   | Matmul of { lhs : node_id; rhs : node_id }
+  | Custom_call of { handler : ffi_handler; inputs : node_id list }
   | Assign of { dst : node_id; src : node_id }
   | Unsupported of string
 
@@ -125,5 +133,6 @@ val parameterize_constants :
   ?min_bytes:int -> program -> program * lifted_constant list
 val prune : program -> program
 val unsupported_ops : program -> string list
+val ffi_handlers : program -> ffi_handler list
 val pp_program : Format.formatter -> program -> unit
 val program_to_string : program -> string

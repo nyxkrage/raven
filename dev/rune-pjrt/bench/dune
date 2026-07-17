@@ -1,0 +1,7 @@
+(executable
+ (name softmax_profile)
+ (enabled_if (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
+ (libraries rune_pjrt nx rune unix)
+ (link_deps ../kernels/causal_scaled_softmax.so)
+ (preprocess
+  (pps ppx_rune_kernel)))

@@ -51,6 +51,10 @@ thread.
 
 ### Rune
 
+- Add experimental `[@@rune.kernel.cuda]` support for prebuilt PJRT CUDA FFI
+  kernels. Forward and VJP handlers can be supplied independently, while the
+  annotated Rune body remains the eager, CPU, JVP, `vmap`, and missing-handler
+  fallback.
 - Add `Rune.jacfwd` and `Rune.jacrev` for computing full Jacobian matrices.
   `jacfwd` uses forward-mode AD (column-by-column via JVP); `jacrev` uses
   reverse-mode AD (row-by-row via VJP). Prefer `jacfwd` when inputs are smaller
