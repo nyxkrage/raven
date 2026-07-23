@@ -14,3 +14,18 @@
 
 module Gpt2 = Hugr_gpt2
 (** GPT-2 decoder and language model head. *)
+
+module Llama = Hugr_llama
+(** LLaMA decoder and causal language model head. *)
+
+module Mistral = Hugr_llama.Mistral
+(** Mistral decoder and causal language model head. *)
+
+module Gemma2 = Hugr_llama.Gemma2
+(** Gemma 2 decoder and causal language model head. *)
+
+module Gemma3 = Hugr_llama.Gemma3
+(** Gemma 3 text decoder and causal language model head. *)
+
+module Falcon = Hugr_llama.Falcon
+(** Falcon parallel decoder and causal language model head. *)

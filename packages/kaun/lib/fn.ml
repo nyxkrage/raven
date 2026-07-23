@@ -81,7 +81,6 @@ let rms_norm ?axes ?(epsilon = 1e-5) ?gamma x =
     normalize_axes ~fn:"rms_norm" ~ndim default
   in
   let x_shape = Nx.shape x in
-  let keep = keep_shape ~axes x_shape in
   let mean_square = Nx.mean (Nx.mul x x) ~axes ~keepdims:true in
   let eps = Nx.scalar_like x epsilon in
   let normalized = Nx.mul x (Nx.rsqrt (Nx.add mean_square eps)) in
@@ -89,16 +88,21 @@ let rms_norm ?axes ?(epsilon = 1e-5) ?gamma x =
   | None -> normalized
   | Some gamma ->
       let gamma_shape = Nx.shape gamma in
+      let broadcast_shape =
+        Array.mapi
+          (fun index dim ->
+            if List.exists (fun axis -> axis = index) axes then dim else 1)
+          x_shape
+      in
       let gamma =
-        if gamma_shape = keep then gamma
+        if gamma_shape = broadcast_shape then gamma
         else
-          let unaffected = unaffected_axes ~ndim ~axes in
-          let core = core_shape ~axes:unaffected x_shape in
-          if gamma_shape = core then Nx.reshape keep gamma
+          let core = core_shape ~axes x_shape in
+          if gamma_shape = core then Nx.reshape broadcast_shape gamma
           else if gamma_shape = x_shape then gamma
           else
             invalid_argf_fn "rms_norm"
-              "gamma: shape must match normalized axes or remaining axes"
+              "gamma: shape must match normalized axes or input shape"
       in
       Nx.mul normalized gamma
 

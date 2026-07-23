@@ -100,6 +100,15 @@ let test_rms_norm_shapes () =
   equal ~msg:"scale values" bool true
     (Array.for_all (fun x -> x = 1.0) (flatten_f32 scale))
 
+let test_rms_norm_forward_rank3 () =
+  Nx.Rng.run ~seed:42 @@ fun () ->
+  let m = Layer.rms_norm ~dim:6 () in
+  let vars = Layer.init m ~dtype:Nx.float32 in
+  let x = Nx.randn Nx.float32 [| 2; 4; 6 |] in
+  let y = apply_out m vars ~training:false x in
+  equal ~msg:"rank-3 output shape" (list int) [ 2; 4; 6 ]
+    (Array.to_list (Nx.shape y))
+
 let test_batch_norm_shapes () =
   Nx.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.batch_norm ~num_features:3 () in
@@ -464,6 +473,7 @@ let () =
           test "layer_norm shapes" test_layer_norm_shapes;
           test "layer_norm forward" test_layer_norm_forward;
           test "rms_norm shapes" test_rms_norm_shapes;
+          test "rms_norm rank-3 forward" test_rms_norm_forward_rank3;
           test "batch_norm shapes" test_batch_norm_shapes;
           test "batch_norm rank3 axes" test_batch_norm_rank3_axes;
           test "batch_norm running stats eval"

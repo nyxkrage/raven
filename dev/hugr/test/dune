@@ -1,0 +1,19 @@
+(test
+ (name test_llama)
+ (libraries nx rune rune-pjrt kaun hugr windtrap))
+
+(test
+ (name test_mistral)
+ (libraries nx rune rune-pjrt kaun hugr windtrap))
+
+(test
+ (name test_gemma2)
+ (libraries nx rune rune-pjrt kaun hugr windtrap))
+
+(test
+ (name test_gemma3)
+ (libraries nx rune rune-pjrt kaun hugr windtrap))
+
+(test
+ (name test_falcon)
+ (libraries nx rune rune-pjrt kaun hugr windtrap))

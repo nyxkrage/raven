@@ -49,6 +49,12 @@ thread.
   ndarray offset, producing wrong results when the data starts at a non-zero
   offset in the underlying buffer.
 
+### Hugr
+
+- Add dense LLaMA, Mistral, Gemma 2, Gemma 3, and Falcon causal language models
+  with Hugging Face loading and fixed-capacity KV caches for eager and PJRT CUDA
+  prefill and decoding.
+
 ### Rune
 
 - Lower `Nx.erf` through CHLO in the experimental PJRT backend, enabling exact
@@ -68,6 +74,8 @@ thread.
 
 ### Kaun
 
+- Fix `Fn.rms_norm` gamma broadcasting across normalized axes, allowing
+  `Layer.rms_norm` to process rank-3 sequence tensors correctly.
 - Optimizers extracted to the new Vega package. `Kaun.Optim` now delegates to
   Vega for per-leaf updates across parameter trees. `Train.make` accepts a
   `Vega.t` directly instead of `Optim.algorithm`. Learning-rate schedules move

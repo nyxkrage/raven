@@ -1,0 +1,4 @@
+(library
+ (name hugr_core)
+ (public_name hugr.internal)
+ (libraries nx nx.core kaun jsont))

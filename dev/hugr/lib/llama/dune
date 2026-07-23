@@ -1,0 +1,4 @@
+(library
+ (name hugr_llama)
+ (public_name hugr.llama)
+ (libraries nx nx.core rune-pjrt kaun kaun.hf jsont hugr_core))

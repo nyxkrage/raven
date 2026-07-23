@@ -13,5 +13,7 @@
   dune
   nx
   rune
+  rune-pjrt
   kaun
-  jsont))
+  jsont
+  (windtrap :with-test)))

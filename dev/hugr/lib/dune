@@ -1,4 +1,4 @@
 (library
  (name hugr)
  (public_name hugr)
- (libraries hugr.gpt2))
+ (libraries hugr.gpt2 hugr.llama))

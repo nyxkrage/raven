@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Gpt2 = Hugr_gpt2
-module Llama = Hugr_llama
-module Mistral = Hugr_llama.Mistral
-module Gemma2 = Hugr_llama.Gemma2
-module Gemma3 = Hugr_llama.Gemma3
-module Falcon = Hugr_llama.Falcon
+module Config = Config
+include Llama
+module Mistral = Mistral
+module Gemma2 = Gemma2
+module Gemma3 = Gemma3
+module Falcon = Falcon
