@@ -55,6 +55,14 @@ let test_rune_jit_pjrt_cpu_executes () =
   let actual = f x in
   check_close "rune_jit_pjrt_cpu_executes" expected actual
 
+let test_jit_erf_executes backend =
+  let x = Nx.create Nx.float32 [| 7 |] [| -4.; -1.; -0.5; 0.; 0.5; 1.; 4. |] in
+  let expected = Nx.erf x in
+  let actual = Rune_pjrt.jit ~backend Nx.erf x in
+  check_close
+    (Printf.sprintf "jit_%s_erf_executes" (Rune_pjrt.Backend.to_string backend))
+    expected actual
+
 let test_jit_cuda_executes () =
   let x = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   let f =
@@ -69,5 +77,8 @@ let () =
   if backend_available `Cpu then (
     test_jit_cpu_executes ();
     test_jit_cpu_argmax_executes ();
-    test_rune_jit_pjrt_cpu_executes ());
-  if backend_available `Cuda then test_jit_cuda_executes ()
+    test_rune_jit_pjrt_cpu_executes ();
+    test_jit_erf_executes `Cpu);
+  if backend_available `Cuda then (
+    test_jit_cuda_executes ();
+    test_jit_erf_executes `Cuda)

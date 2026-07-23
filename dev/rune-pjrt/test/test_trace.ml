@@ -7,6 +7,16 @@ let failf fmt = Printf.ksprintf failwith fmt
 
 let require msg condition = if not condition then failf "test_trace: %s" msg
 
+let contains_substring text substring =
+  let text_length = String.length text in
+  let substring_length = String.length substring in
+  let rec loop offset =
+    if offset + substring_length > text_length then false
+    else if String.sub text offset substring_length = substring then true
+    else loop (offset + 1)
+  in
+  loop 0
+
 let test_basic_trace () =
   let x = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   let capture =
@@ -38,6 +48,15 @@ let test_constant_capture () =
   in
   require "closed tensor constant captured" (constant_nodes <> [])
 
+let test_erf_lowering () =
+  let x = Nx.create Nx.float32 [| 3 |] [| -1.; 0.; 1. |] in
+  let capture = Rune_pjrt.Trace.capture_one Nx.erf x in
+  let module_text = Rune_pjrt.Stablehlo.of_program capture.program in
+  require "erf lowers to CHLO with explicit input and result types"
+    (contains_substring module_text
+       "chlo.erf %arg0 : tensor<3xf32> -> tensor<3xf32>")
+
 let () =
   test_basic_trace ();
-  test_constant_capture ()
+  test_constant_capture ();
+  test_erf_lowering ()

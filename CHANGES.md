@@ -51,6 +51,8 @@ thread.
 
 ### Rune
 
+- Lower `Nx.erf` through CHLO in the experimental PJRT backend, enabling exact
+  GELU and other error-function computations on XLA CPU and CUDA devices.
 - Add experimental `[@@rune.kernel.cuda]` support for prebuilt PJRT CUDA FFI
   kernels. Forward and VJP handlers can be supplied independently, while the
   annotated Rune body remains the eager, CPU, JVP, `vmap`, and missing-handler

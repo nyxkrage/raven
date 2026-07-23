@@ -308,6 +308,12 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
                "%s%%v%d = stablehlo.divide %%v%d_one, %s : %s" indent
                node.Ir.id node.Ir.id (op_ref ~arg_name program input) input_ty;
            ])
+  | Unary { op = Erf; input } ->
+      let input_ty = tensor_type (find_node program input).Ir.desc in
+      Some
+        (Printf.sprintf "%s%%v%d = chlo.erf %s : %s -> %s" indent node.Ir.id
+           (op_ref ~arg_name program input)
+           input_ty ty)
   | Unary { op; input } ->
       Some
         (Printf.sprintf "%s%%v%d = %s %s : %s" indent node.Ir.id
