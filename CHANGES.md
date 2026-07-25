@@ -84,6 +84,8 @@ thread.
 
 ### Tolk
 
+- Fuse shared elementwise expressions reached through different movement
+  operations without leaking unclosed ranges or dropping every kernel.
 - Preserve generated kernel parameter order and reject unresolved buffer slots
   before eager or JIT dispatch, preventing positional ABI shifts and native
   crashes.

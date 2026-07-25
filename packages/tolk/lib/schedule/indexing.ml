@@ -449,8 +449,18 @@ let create_bufferize_and_index ctx ~devices n =
                      T.index ~ptr:buf ~idxs ~dtype:idx_dtype ()
                  | None -> buf)
         | _ -> s) children in
-      if !changed then Some (T.replace n ~children:new_children ())
-      else None
+      if not !changed then None
+      else
+        let ret = T.replace n ~children:new_children () in
+        (* Explicit rewrites bypass graph_rewrite's on_rebuild hook.  Keep the
+           analysis state on the equivalent parent with indexed children. *)
+        (match realize_get ctx n with
+        | Some state -> realize_set ctx ret state
+        | None -> ());
+        (match range_get ctx n with
+        | Some ranges -> range_set ctx ret ranges
+        | None -> ());
+        Some ret
 
 (* Cascading rules matching tinygrad's pm_apply_rangeify PatternMatcher.
    Rules 1–2 are op-specific; rule 3 (All) matches everything; rule 4

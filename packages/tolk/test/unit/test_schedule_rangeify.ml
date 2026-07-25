@@ -826,11 +826,8 @@ let get_kernel_graph_tests =
                    | _ -> None)
           in
           equal (list int) [ 1 ] direct_input_slots);
-      (* test_children_dont_push:
-         TODO: should be 1 kernel. remove_bufferize correctly identifies the
-         removable bufferize but the substitution (inlining ranges into source)
-         is not yet implemented. *)
-      pipeline_test "children dont push" ~expected_calls:2 (fun b ->
+      (* test_children_dont_push *)
+      pipeline_test "children dont push" ~expected_calls:1 (fun b ->
           let a = mk_param ~slot:0 [ 10; 10; 1 ] in
           let bp = mk_param ~slot:1 [ 10; 10; 1 ] in
           let ab = T.binary ~op:`Add ~lhs:a ~rhs:bp in
