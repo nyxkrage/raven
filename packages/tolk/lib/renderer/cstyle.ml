@@ -176,6 +176,16 @@ let base_code_for_op_list : Renderer.code_op list =
     And; Xor; Or; Add; Sub; Mul; Mod; Idiv; Cmpne;
     Shr; Shl; Cmplt; Where; Cmpeq ]
 
+(* The freestanding CPU runtime has no C math library to provide these
+   transcendental symbols.  Keep their rendering rules for other C-family
+   backends, but make the Clang lowering expand them into arithmetic. *)
+let clang_code_for_op_list =
+  List.filter
+    (function
+      | Renderer.Exp2 | Renderer.Log2 | Renderer.Sin -> false
+      | _ -> true)
+    base_code_for_op_list
+
 let base_code_for_op = {
   unary = (fun op x _dt -> match op with
     | `Neg -> strf "-%s" x | `Exp2 -> strf "exp2(%s)" x
@@ -1273,7 +1283,7 @@ let clang_extra_matcher =
   ]
 
 let clang =
-  Renderer.make ~code_for_op:base_code_for_op_list
+  Renderer.make ~code_for_op:clang_code_for_op_list
     ~name:"clang" ~device:"CPU"
     ~has_local:false ~has_shared:false ~shared_max:0
     ~has_threads:threads
@@ -1282,7 +1292,7 @@ let clang =
     ~render:(render_fn clang_abi_lang) ()
 
 let clang_no_abi =
-  Renderer.make ~code_for_op:base_code_for_op_list
+  Renderer.make ~code_for_op:clang_code_for_op_list
     ~name:"clang" ~device:"CPU"
     ~has_local:false ~has_shared:false ~shared_max:0
     ~has_threads:threads

@@ -589,6 +589,70 @@ let get_kernel_graph_tests =
           let ab = T.binary ~op:`Add ~lhs:a ~rhs:bp in
           let abc = T.binary ~op:`Add ~lhs:ab ~rhs:c in
           wrap_sink b abc);
+      test "call buffers follow kernel parameter order" (fun () ->
+          let a = mk_param ~slot:0 [ 10 ] in
+          let b = mk_param ~slot:1 [ 10 ] in
+          let result =
+            T.binary ~op:`Sub ~lhs:a ~rhs:b |> wrap_sink ()
+            |> Rangeify.get_kernel_graph
+          in
+          let call =
+            T.toposort result
+            |> List.filter_map (fun node ->
+                   match T.view node with
+                   | Call { callee = Ast kernel; args; _ } ->
+                       Some (kernel, Array.of_list args)
+                   | _ -> None)
+          in
+          let kernel, args =
+            match call with
+            | [ call ] -> call
+            | calls ->
+                failwith
+                  (Printf.sprintf "expected one kernel call, got %d"
+                     (List.length calls))
+          in
+          let rec param_index node =
+            match K.view node with
+            | Param { idx; _ } -> idx
+            | Index { ptr; _ } -> param_index ptr
+            | Load { src; _ } -> param_index src
+            | _ ->
+                failwith
+                  (Format.asprintf "expected parameter access, got %a"
+                     K.pp_view node)
+          in
+          let lhs_index, rhs_index, output_index =
+            let binary = ref None in
+            let output = ref None in
+            List.iter
+              (fun node ->
+                match K.view node with
+                | Binary { op = `Sub; lhs; rhs; _ } ->
+                    binary := Some (param_index lhs, param_index rhs)
+                | Store { dst; _ } -> output := Some (param_index dst)
+                | _ -> ())
+              (K.toposort kernel);
+            match (!binary, !output) with
+            | Some (lhs, rhs), Some output -> (lhs, rhs, output)
+            | _ -> failwith "expected subtraction and output store"
+          in
+          let expect_input slot argument =
+            match T.view (T.base argument) with
+            | Param { slot = actual; _ } -> equal int slot actual
+            | view ->
+                failwith
+                  (Format.asprintf "expected tensor parameter, got %a"
+                     T.pp_view view)
+          in
+          expect_input 0 args.(lhs_index);
+          expect_input 1 args.(rhs_index);
+          match T.view (T.base args.(output_index)) with
+          | Buffer _ -> ()
+          | view ->
+              failwith
+                (Format.asprintf "expected output buffer, got %a" T.pp_view
+                   view));
       (* test_mulacc_fusion *)
       pipeline_test "mulacc fusion" ~expected_calls:1 (fun b ->
           let a = mk_param ~slot:0 [ 10 ] in
@@ -688,6 +752,80 @@ let get_kernel_graph_tests =
             T.reduce_axis ~src:reshaped ~op:`Add ~axes:[ 1 ]
           in
           wrap_sink b red2);
+      test "dependency buffers do not leave kernel parameter holes" (fun () ->
+          let input = mk_param ~slot:0 [ 32_768 ] in
+          let bias = mk_param ~slot:1 [] in
+          let reduced = T.reduce_axis ~src:input ~op:`Add ~axes:[ 0 ] in
+          let result =
+            T.binary ~op:`Sub ~lhs:reduced ~rhs:bias |> wrap_sink ()
+            |> Rangeify.get_kernel_graph
+          in
+          let calls =
+            T.toposort result
+            |> List.filter_map (fun node ->
+                   match T.view node with
+                   | Call { callee = Ast kernel; args; _ } ->
+                       Some (kernel, Array.of_list args)
+                   | _ -> None)
+          in
+          equal int 2 (List.length calls);
+          let kernel, args =
+            match
+              List.find_opt
+                (fun (kernel, _) ->
+                  List.exists
+                    (fun node ->
+                      match K.view node with
+                      | Binary { op = `Sub; _ } -> true
+                      | _ -> false)
+                    (K.toposort kernel))
+                calls
+            with
+            | Some call -> call
+            | None -> failwith "expected reduction consumer kernel"
+          in
+          let param_indices =
+            K.toposort kernel
+            |> List.filter_map (fun node ->
+                   match K.view node with
+                   | Param { idx; _ } -> Some idx
+                   | _ -> None)
+            |> List.sort_uniq Int.compare
+          in
+          equal (list int) [ 0; 1; 2 ] param_indices;
+          equal int 3 (Array.length args);
+          let rec param_index node =
+            match K.view node with
+            | Param { idx; _ } -> idx
+            | Index { ptr; _ } -> param_index ptr
+            | Load { src; _ } -> param_index src
+            | _ ->
+                failwith
+                  (Format.asprintf "expected parameter access, got %a"
+                     K.pp_view node)
+          in
+          let bias_index =
+            K.toposort kernel
+            |> List.find_map (fun node ->
+                   match K.view node with
+                   | Binary { op = `Sub; rhs; _ } -> Some (param_index rhs)
+                   | _ -> None)
+            |> Option.get
+          in
+          (match T.view (T.base args.(bias_index)) with
+          | Param { slot; _ } -> equal int 1 slot
+          | view ->
+              failwith
+                (Format.asprintf "expected captured bias, got %a" T.pp_view
+                   view));
+          let direct_input_slots =
+            Array.to_list args
+            |> List.filter_map (fun argument ->
+                   match T.view (T.base argument) with
+                   | Param { slot; _ } -> Some slot
+                   | _ -> None)
+          in
+          equal (list int) [ 1 ] direct_input_slots);
       (* test_children_dont_push:
          TODO: should be 1 kernel. remove_bufferize correctly identifies the
          removable bufferize but the substitution (inlining ranges into source)

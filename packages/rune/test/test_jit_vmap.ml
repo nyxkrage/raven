@@ -47,12 +47,13 @@ let test_jit_vmap_self_add () =
   | Some dev ->
       (* f(x) = x + x, vmapped *)
       let f x = T.add x x in
-      let x = T.full T.float32 [| 3; 4 |] 2.0 in
-      let expected = T.vmap f x in
+      let x1 = T.full T.float32 [| 3; 4 |] 2.0 in
+      let x2 = T.full T.float32 [| 3; 4 |] 5.0 in
+      let expected = T.vmap f x2 in
       let vmap_jit = T.jit ~device:dev (T.vmap f) in
-      let _ = vmap_jit x in
-      let _ = vmap_jit x in
-      let result = vmap_jit x in
+      let _ = vmap_jit x1 in
+      let _ = vmap_jit x1 in
+      let result = vmap_jit x2 in
       check_rune ~eps "jit(vmap(x+x))" expected result
 
 let test_jit_vmap_sum () =

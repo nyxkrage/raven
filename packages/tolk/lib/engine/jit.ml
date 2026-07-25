@@ -7,10 +7,11 @@
 
 (* JIT compilation.
 
-   Three-phase execution: warmup (cnt=0) runs eagerly, capture (cnt=1)
-   records the computation schedule, exec (cnt>=2) replays the compiled
-   schedule with fresh input buffers.  On the first replay, the schedule
-   may be condensed into graph executors when the device supports it. *)
+   Execution normally has three phases: warmup (cnt=0) runs eagerly, capture
+   (cnt=1) records the computation schedule, and exec (cnt>=2) replays the
+   compiled schedule with fresh input buffers.  A wrapper that performs its
+   own warmup can start at capture.  On the first replay, the schedule may be
+   condensed into graph executors when the device supports it. *)
 
 open Tolk_ir
 module K = Kernel
@@ -95,8 +96,17 @@ let runner_of_prg = function
 
 let run_ei ei var_vals ~jit =
   let runner = runner_of_prg ei.prg in
-  let bufs = Array.to_list ei.bufs |> List.filter_map (fun b ->
-    Option.map (fun buf -> B.ensure_allocated buf; buf) b) in
+  let bufs =
+    Array.to_list ei.bufs
+    |> List.mapi (fun slot -> function
+         | Some buf ->
+             B.ensure_allocated buf;
+             buf
+         | None ->
+             raise
+               (Jit_error
+                  (strf "unresolved runtime buffer at argument %d" slot)))
+  in
   ignore (Realize.Runner.call runner bufs var_vals
     ~wait:(not jit || debug >= 2) ~timeout:None)
 
@@ -106,7 +116,15 @@ let run_ei ei var_vals ~jit =
 let lower_realize_ei ~device ~get_program (rei : Realize.Exec_item.t)
     : exec_item =
   let bufs = Array.of_list (Realize.Exec_item.bufs rei) in
-  let live_bufs = Array.to_list bufs |> List.filter_map Fun.id in
+  let live_bufs =
+    Array.to_list bufs
+    |> List.mapi (fun slot -> function
+         | Some buf -> buf
+         | None ->
+             raise
+               (Jit_error
+                  (strf "unresolved captured buffer at argument %d" slot)))
+  in
   let prg =
     match T.view (Realize.Exec_item.ast rei) with
     | Call { callee = Ast kernel; _ } ->
@@ -646,7 +664,7 @@ let exec_captured t ~device (input_bufs : B.t array)
     let base = bufs.(vi.vi_base_idx) in
     let view = B.view base
       ~size:vi.vi_size ~dtype:vi.vi_dtype
-      ~offset:(vi.vi_offset * Dtype.itemsize vi.vi_dtype) in
+      ~offset:vi.vi_offset in
     B.ensure_allocated view;
     bufs.(n + k) <- view)
     t.extra_view_inputs;
@@ -739,6 +757,7 @@ type 'a tiny_jit = {
   get_program : Kernel.t -> Program_spec.t;
   prune : bool;
   optimize : bool;
+  warmup : bool;
   mutable captured : 'a captured_jit option;
   mutable cnt : int;
 }
@@ -747,13 +766,13 @@ let captured t = t.captured
 let jit_cache t = t.jit_cache
 
 let create ~device ~get_program ?fxn ?captured
-    ?(prune = false) ?(optimize = false) () =
-  let cnt = if fxn = None then 2 else 0 in
-  { fxn; device; get_program; prune; optimize; captured; cnt }
+    ?(prune = false) ?(optimize = false) ?(warmup = true) () =
+  let cnt = if fxn = None then 2 else if warmup then 0 else 1 in
+  { fxn; device; get_program; prune; optimize; warmup; captured; cnt }
 
 let reset t =
   if t.fxn = None then invalid_arg "can't reset without function";
-  t.cnt <- 0;
+  t.cnt <- if t.warmup then 0 else 1;
   t.captured <- None
 
 let call t (input_bufs : B.t array)

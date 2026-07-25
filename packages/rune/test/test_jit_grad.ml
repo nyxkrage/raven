@@ -61,13 +61,19 @@ let test_jit_grad_sin () =
   | Some dev ->
       (* f(x) = sum(sin(x)), grad = cos(x) *)
       let f x = T.sum (T.sin x) in
-      let x = T.full T.float32 [| 4 |] 1.0 in
-      let expected = T.grad f x in
+      let x1 = T.full T.float32 [| 4 |] 1.0 in
+      let x2 = T.full T.float32 [| 4 |] 0.5 in
+      let x3 = T.full T.float32 [| 4 |] 1e8 in
+      let expected = T.grad f x2 in
+      let expected_large = T.grad f x3 in
       let grad_jit = T.jit ~device:dev (T.grad f) in
-      let _ = grad_jit x in
-      let _ = grad_jit x in
-      let result = grad_jit x in
-      check_rune ~eps "jit(grad(sum(sin(x))))" expected result
+      let _ = grad_jit x1 in
+      let _ = grad_jit x1 in
+      let result = grad_jit x2 in
+      check_rune ~eps "jit(grad(sum(sin(x))))" expected result;
+      let result_large = grad_jit x3 in
+      check_rune ~eps "jit(grad(sum(sin(x)))) at large x" expected_large
+        result_large
 
 let test_jit_grad_polynomial () =
   match get_cpu_device () with

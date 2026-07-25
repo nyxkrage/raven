@@ -58,10 +58,7 @@ let create_bufs_for_kernel device ast =
 
 (* AST Fixture Builders *)
 
-(* Elementwise: output[i] = input[i] + input[i], single flat loop.
-   Avoids transcendental ops (exp2/sin/log2) because the Clang freestanding
-   backend compiles to ELF without libm — those ops require the transcendental
-   decomposition pass which is not yet ported. *)
+(* Elementwise: output[i] = input[i] + input[i], single flat loop. *)
 let elementwise_1d_ast ~n =
   let p0 = K.param ~idx:0 ~dtype:(f32_ptr n) in
   let p1 = K.param ~idx:1 ~dtype:(f32_ptr n) in

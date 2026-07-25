@@ -9,10 +9,10 @@
    scheduling, compilation, memory planning, and replay to the tolk JIT engine
    (Tolk.Jit.Tiny_jit).
 
-   Three phases (managed by Tiny_jit): - Warmup (cnt=0): execute eagerly via C
-   backend - Capture (cnt=1): intercept effects, build lazy graph, schedule,
-   compile, and execute - Replay (cnt>=2): validate inputs, substitute buffers,
-   execute *)
+   Three phases: - Warmup: Rune executes eagerly via the C backend - Capture
+   (Tiny_jit cnt=1): intercept effects, build a lazy graph, schedule, compile,
+   and execute - Replay (Tiny_jit cnt>=2): validate inputs, substitute buffers,
+   and execute *)
 
 open Nx_effect
 module T = Tolk_ir.Tensor
@@ -118,6 +118,20 @@ let shape_node dims =
   | _ -> (
       match List.map int_ dims with [ d ] -> d | ds -> T.vectorize ~srcs:ds)
 
+let register_param ctx (t : _ Nx_effect.t) =
+  let slot = ctx.param_count in
+  ctx.param_count <- slot + 1;
+  let dt = tolk_dtype (Nx_effect.dtype t) in
+  let shape = Nx_effect.view t |> Nx_core.View.shape in
+  let node =
+    T.param ~slot ~dtype:dt
+      ~shape:(shape_node (Array.to_list shape))
+      ~device:ctx.device_node ()
+  in
+  register ctx t node;
+  Hashtbl.replace ctx.slot_tensors slot (Obj.repr t, dt, shape);
+  node
+
 (* Read a scalar value from an Nx tensor and construct a Const.t. Used to fold
    scalar constants into the kernel IR. *)
 let read_scalar_const (type a b) (t : (a, b) Nx_effect.t) (dt : Tolk_ir.Dtype.t)
@@ -155,17 +169,7 @@ let lookup_or_param ctx (t : _ Nx_effect.t) : T.t =
         Phys_tbl.replace ctx.tensor_to_node key node;
         node
       end
-      else begin
-        let slot = ctx.param_count in
-        ctx.param_count <- slot + 1;
-        let sh = shape_node (Array.to_list shape) in
-        let node =
-          T.param ~slot ~dtype:dt ~shape:sh ~device:ctx.device_node ()
-        in
-        Phys_tbl.replace ctx.tensor_to_node key node;
-        Hashtbl.replace ctx.slot_tensors slot (key, dt, shape);
-        node
-      end
+      else register_param ctx t
 
 (* Graph building *)
 
@@ -181,6 +185,24 @@ let emit_unary ctx op (src : _ Nx_effect.t) ~dtype ~shape =
   let src_node = lookup_or_param ctx src in
   let out = make_placeholder dtype shape in
   let node = T.unary ~op ~src:src_node in
+  register ctx out node;
+  out
+
+let emit_cos ctx (src : _ Nx_effect.t) ~dtype ~shape =
+  let src_node = lookup_or_param ctx src in
+  let dt = tolk_dtype dtype in
+  let scalar value =
+    T.const (Tolk_ir.Const.float (Tolk_ir.Dtype.val_of dt) value) dt
+  in
+  (* cos(x) = 1 - 2 sin(x / 2)^2. This uses Tolk's existing range-reduced sine
+     lowering without adding pi/2 to x, which would lose the phase for large,
+     low-precision inputs. *)
+  let half = T.binary ~op:`Mul ~lhs:src_node ~rhs:(scalar 0.5) in
+  let sin_half = T.unary ~op:`Sin ~src:half in
+  let square = T.binary ~op:`Mul ~lhs:sin_half ~rhs:sin_half in
+  let twice_square = T.binary ~op:`Mul ~lhs:(scalar 2.0) ~rhs:square in
+  let out = make_placeholder dtype shape in
+  let node = T.binary ~op:`Sub ~lhs:(scalar 1.0) ~rhs:twice_square in
   register ctx out node;
   out
 
@@ -259,6 +281,12 @@ let make_capture_handler ctx =
           (fun k ->
             continue k
               (emit_unary ctx `Sin t_in ~dtype:(Nx_effect.dtype t_in)
+                 ~shape:(infer_shape t_in)))
+    | E_cos { t_in } ->
+        Some
+          (fun k ->
+            continue k
+              (emit_cos ctx t_in ~dtype:(Nx_effect.dtype t_in)
                  ~shape:(infer_shape t_in)))
     | E_recip { t_in } ->
         Some
@@ -362,6 +390,7 @@ let capture_graph (type a b c d) ?(device_name = "CPU")
     T.t * capture_ctx * (c, d) Nx_effect.t =
   let device_node = T.device (Single device_name) in
   let ctx = create_capture_ctx device_node in
+  ignore (register_param ctx x);
   let handler = make_capture_handler ctx in
   let result = Effect.Deep.match_with f x handler in
   let result_node = lookup_or_param ctx result in
@@ -371,46 +400,71 @@ let capture_graph (type a b c d) ?(device_name = "CPU")
 
 (* Scheduling bridge *)
 
-(* Build the buffers callback for Schedule.linear_to_schedule. Maps PARAM tensor
-   nodes to device buffers: slot 0 is the function input, other slots are
-   captured constants. *)
+(* Build the buffers callback for Schedule.linear_to_schedule. Parameter slot 0
+   is the function input; other parameters are captured tensors. Generated
+   buffers and views are cached by graph identity so producer and consumer
+   kernels share the same storage. *)
 let make_buffers_cb ctx dev input_buf =
-  let cache : (int, B.t) Hashtbl.t = Hashtbl.create 16 in
-  fun (node : T.t) ->
+  let slot_buffers : (int, B.t) Hashtbl.t = Hashtbl.create 16 in
+  let node_buffers : (int, B.t) Hashtbl.t = Hashtbl.create 32 in
+  let param_buffer slot =
+    match Hashtbl.find_opt slot_buffers slot with
+    | Some buf -> buf
+    | None ->
+        let buf =
+          if slot = 0 then input_buf
+          else
+            let repr, dt, shape = Hashtbl.find ctx.slot_tensors slot in
+            let num = Int.max 1 (Array.fold_left ( * ) 1 shape) in
+            let buf = Tolk.Device.create_buffer ~size:num ~dtype:dt dev in
+            B.ensure_allocated buf;
+            let nbytes = num * Tolk_ir.Dtype.itemsize dt in
+            let src = Bytes.create nbytes in
+            let host = Nx_effect.to_host (Obj.obj repr : (_, _) Nx_effect.t) in
+            Nx_buffer.blit_to_bytes host src;
+            B.copyin buf src;
+            buf
+        in
+        Hashtbl.replace slot_buffers slot buf;
+        buf
+  in
+  let cached node make =
+    let tag = T.tag node in
+    match Hashtbl.find_opt node_buffers tag with
+    | Some buf -> buf
+    | None ->
+        let buf = make () in
+        Hashtbl.replace node_buffers tag buf;
+        buf
+  in
+  let rec resolve node =
+    let node = T.base node in
     match T.view node with
-    | Param { slot; _ } -> (
-        match Hashtbl.find_opt cache slot with
-        | Some buf -> Some buf
-        | None ->
-            let buf =
-              if slot = 0 then input_buf
-              else
-                let repr, dt, shape = Hashtbl.find ctx.slot_tensors slot in
-                let num = Int.max 1 (Array.fold_left ( * ) 1 shape) in
-                let buf = Tolk.Device.create_buffer ~size:num ~dtype:dt dev in
-                B.ensure_allocated buf;
-                let nbytes = num * Tolk_ir.Dtype.itemsize dt in
-                let src = Bytes.create nbytes in
-                let host =
-                  Nx_effect.to_host (Obj.obj repr : (_, _) Nx_effect.t)
-                in
-                Nx_buffer.blit_to_bytes host src;
-                B.copyin buf src;
-                buf
-            in
-            Hashtbl.replace cache slot buf;
-            Some buf)
+    | Param { slot; _ } -> Some (param_buffer slot)
+    | Buffer { size; dtype; _ } ->
+        Some
+          (cached node (fun () -> Tolk.Device.create_buffer ~size ~dtype dev))
+    | Buffer_view { src; size; offset; dtype } ->
+        Some
+          (cached node (fun () ->
+               match resolve src with
+               | Some base ->
+                   B.view base ~size ~dtype
+                     ~offset:(offset * Tolk_ir.Dtype.itemsize dtype)
+               | None -> failwith "Jit: buffer view has no runtime base buffer"))
+    | After { src; _ } -> resolve src
     | _ -> None
+  in
+  resolve
 
-(* Find the output buffer in the captured schedule — first non-None buffer of
-   the last exec item. *)
+(* Find the last buffer written by the captured schedule. *)
 let find_output_buf cache =
   let n = Array.length cache in
   let rec loop i =
     if i < 0 then failwith "Jit: no output buffer in schedule";
-    match cache.(i).Tolk.Jit.bufs.(0) with
-    | Some buf -> buf
-    | None -> loop (i - 1)
+    match Tolk.Jit.get_out_buffers cache.(i) with
+    | buf :: _ -> buf
+    | [] -> loop (i - 1)
   in
   loop (n - 1)
 
@@ -424,6 +478,7 @@ let trace_tolk (type a b c d) ?(device : Tolk.Device.t option)
     ref None
   in
   let input_nx_dtype : Obj.t option ref = ref None in
+  let input_dtype_name : string option ref = ref None in
   let input_shape : int array ref = ref [||] in
   let output_nx_dtype : Obj.t option ref = ref None in
   let output_shape : int array ref = ref [||] in
@@ -468,12 +523,13 @@ let trace_tolk (type a b c d) ?(device : Tolk.Device.t option)
             in
             let out_shape = !output_shape in
             fun () ->
+              Tolk.Device.synchronize dev;
               let c = Option.get (Tolk.Jit.captured (Option.get !tjit_ref)) in
               let buf = find_output_buf (Tolk.Jit.jit_cache c) in
               device_buffer_to_nx out_dt out_shape buf
           end
           else begin
-            (* Warmup inside Tiny_jit (cnt=0). *)
+            (* Eager execution when TinyJit compilation is disabled. *)
             let x =
               device_buffer_to_nx
                 (Obj.obj (Option.get !input_nx_dtype) : (a, b) Nx.dtype)
@@ -485,7 +541,9 @@ let trace_tolk (type a b c d) ?(device : Tolk.Device.t option)
             fun () -> result
           end
         in
-        let tjit = Tolk.Jit.create ~device:dev ~get_program ~fxn () in
+        let tjit =
+          Tolk.Jit.create ~device:dev ~get_program ~fxn ~warmup:false ()
+        in
         tjit_ref := Some tjit;
         tjit
   in
@@ -497,8 +555,28 @@ let trace_tolk (type a b c d) ?(device : Tolk.Device.t option)
     end
     else begin
       let tjit = ensure_tjit () in
-      input_nx_dtype := Some (Obj.repr (Nx_effect.dtype x));
-      input_shape := infer_shape x;
+      let dtype = Nx_effect.dtype x in
+      let dtype_name = Nx_core.Dtype.to_string dtype in
+      let shape = infer_shape x in
+      (match Tolk.Jit.captured tjit with
+      | None ->
+          input_nx_dtype := Some (Obj.repr dtype);
+          input_dtype_name := Some dtype_name;
+          input_shape := shape
+      | Some _ ->
+          if
+            not
+              (String.equal dtype_name (Option.get !input_dtype_name)
+              && Array.equal Int.equal shape !input_shape)
+          then
+            invalid_arg
+              (Printf.sprintf
+                 "Rune.jit: input changed after capture (expected %s %s, got \
+                  %s %s)"
+                 (Option.get !input_dtype_name)
+                 (Nx_core.Shape.to_string !input_shape)
+                 dtype_name
+                 (Nx_core.Shape.to_string shape)));
       let dev =
         match device with
         | Some d -> d

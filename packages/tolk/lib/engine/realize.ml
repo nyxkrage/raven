@@ -223,7 +223,18 @@ let buffer_copy ~device ~total_sz ~dest_device ~src_device =
 
 (* Method cache *)
 
-let method_cache : (string, Compiled_runner.t) Hashtbl.t = Hashtbl.create 64
+module Method_cache = Hashtbl.Make (struct
+  type t = Device.t * string
+
+  let equal (left_device, left_key) (right_device, right_key) =
+    left_device == right_device && String.equal left_key right_key
+
+  let hash (_, key) = Hashtbl.hash key
+end)
+
+let method_cache : Compiled_runner.t Method_cache.t = Method_cache.create 64
+let base_method_cache : (string, Program_spec.t) Hashtbl.t =
+  Hashtbl.create 64
 
 let cache_key ~device ~ast_key ~base =
   let compiler_name = match Renderer.compiler (Device.renderer device) with
@@ -233,21 +244,21 @@ let cache_key ~device ~ast_key ~base =
 let get_runner ~device ~get_program (ast : Tolk_ir.Kernel.t) =
   let ast_key =
     Digest.to_hex (Digest.string (Marshal.to_string ast [])) in
-  let ckey = cache_key ~device ~ast_key ~base:false in
-  match Hashtbl.find_opt method_cache ckey with
+  let ckey = (device, cache_key ~device ~ast_key ~base:false) in
+  match Method_cache.find_opt method_cache ckey with
   | Some car -> car
   | None ->
       let bkey = cache_key ~device ~ast_key ~base:true in
-      match Hashtbl.find_opt method_cache bkey with
-      | Some bcar ->
-          let car = Compiled_runner.create ~device (Compiled_runner.p bcar) in
-          Hashtbl.replace method_cache ckey car;
+      match Hashtbl.find_opt base_method_cache bkey with
+      | Some program ->
+          let car = Compiled_runner.create ~device program in
+          Method_cache.replace method_cache ckey car;
           car
       | None ->
           let p = get_program ast in
           let car = Compiled_runner.create ~device p in
-          Hashtbl.replace method_cache ckey car;
-          Hashtbl.replace method_cache bkey car;
+          Method_cache.replace method_cache ckey car;
+          Hashtbl.replace base_method_cache bkey (Compiled_runner.p car);
           car
 
 (* Resolve a scheduled Call node to a runner by dispatching on its
@@ -294,10 +305,20 @@ module Exec_item = struct
   let bufs t = t.bufs
   let var_vals t = t.var_vals
 
+  let resolve_bufs context bufs =
+    List.mapi
+      (fun slot -> function
+        | Some buf -> buf
+        | None ->
+            invalid_arg
+              (strf "exec item: unresolved buffer at argument %d during %s"
+                 slot context))
+      bufs
+
   let lower ~device ~get_program t =
+    let bufs = resolve_bufs "lowering" t.bufs in
     if Option.is_some t.prg then t
     else begin
-      let bufs = List.filter_map Fun.id t.bufs in
       t.prg <- Some (lower_ast ~device ~get_program t.ast bufs);
       t
     end
@@ -308,14 +329,11 @@ module Exec_item = struct
       | None -> invalid_arg "exec item not lowered"
     in
     let merged = t.var_vals @ var_vals in
-    let bufs = List.filter_map (fun b ->
-      match b with
-      | Some buf -> Device.Buffer.ensure_allocated buf; Some buf
-      | None -> None)
-      t.bufs
+    let bufs = resolve_bufs "execution" t.bufs in
+    List.iter Device.Buffer.ensure_allocated bufs;
+    let et =
+      prg.call bufs merged ~wait:(wait || debug >= 2) ~timeout:None
     in
-    let et = prg.call bufs merged
-        ~wait:(wait || debug >= 2) ~timeout:None in
     if do_update_stats then
       prg.first_run <- false;
     et

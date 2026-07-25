@@ -209,9 +209,15 @@ module Buffer = struct
     buf
 
   let view (Pack b as t) ~size ~dtype ~offset =
+    if size < 0 then invalid_arg "buffer view size must be non-negative";
     if offset < 0 then invalid_arg "buffer view offset must be non-negative";
-    if offset >= nbytes t then
-      invalid_arg "buffer view offset must be less than nbytes";
+    let parent_nbytes = nbytes t in
+    let itemsize = Dtype.itemsize dtype in
+    if itemsize = 0 then invalid_arg "buffer view dtype has no storage";
+    if size > max_int / itemsize then invalid_arg "buffer view size overflow";
+    let view_nbytes = size * itemsize in
+    if offset > parent_nbytes || view_nbytes > parent_nbytes - offset then
+      invalid_arg "buffer view exceeds parent buffer";
     let base = base_raw b in
     let raw =
       {
@@ -223,7 +229,7 @@ module Buffer = struct
         allocator = base.allocator;
         buf = None;
         base = Some base;
-        offset = base.offset + offset;
+        offset = b.offset + offset;
         uop_refcount = 0;
         allocated_views = 0;
       }

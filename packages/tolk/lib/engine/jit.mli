@@ -7,9 +7,9 @@
 
 (** JIT compilation and replay.
 
-    A {e JIT} ({!Tiny_jit}) wraps a function and transparently captures
-    its computation schedule on the second call, then replays it on all
-    subsequent calls.  Three phases:
+    A {e JIT} ({!Tiny_jit}) wraps a function, optionally runs one eager warmup,
+    captures its computation schedule, then replays it on subsequent calls.
+    Three phases:
 
     {ul
     {- {e Warmup} (cnt=0): execute eagerly.}
@@ -34,7 +34,7 @@ exception Graph_exn of string
 
 exception Jit_error of string
 (** Raised for JIT-specific errors: nested capture, empty capture,
-    input mismatch on replay. *)
+    unresolved buffer arguments, or input mismatch on replay. *)
 
 (** {1:types Types} *)
 
@@ -153,7 +153,9 @@ val run_ei :
 (** [run_ei ei var_vals ~jit] dispatches [ei] with variable
     bindings [var_vals].  Buffers are allocated on demand.
     When [jit] is [true], execution does not wait for
-    completion. *)
+    completion.
+
+    Raises {!Jit_error} if a runtime buffer slot is unresolved. *)
 
 val lower_realize_ei :
   device:Device.t ->
@@ -168,8 +170,8 @@ val lower_realize_ei :
     Buffer views become {!View_op}; copies become
     {!Buffer_copy}.
 
-    Raises [Failure] if the AST node is not a supported
-    [Call] variant. *)
+    Raises [Failure] if the AST node is not a supported [Call] variant, or
+    {!Jit_error} if a captured buffer slot is unresolved. *)
 
 val get_out_buffers : exec_item -> Device.Buffer.t list
 (** [get_out_buffers ei] is the list of buffers written by [ei].
@@ -379,9 +381,9 @@ val add_linear : Tolk_ir.Tensor.t -> unit
 
 (** The JIT wrapper.
 
-    Wraps a function and transparently captures its computation
-    schedule on the second call.  Subsequent calls replay the
-    compiled schedule with fresh input buffers. *)
+    Wraps a function and transparently captures its computation schedule after
+    an optional eager warmup. Subsequent calls replay the compiled schedule
+    with fresh input buffers. *)
 type 'a tiny_jit
 
 val captured : 'a tiny_jit -> 'a captured_jit option
@@ -399,10 +401,11 @@ val create :
   ?captured:'a captured_jit ->
   ?prune:bool ->
   ?optimize:bool ->
+  ?warmup:bool ->
   unit ->
   'a tiny_jit
 (** [create ~device ~get_program ?fxn ?captured ?prune
-    ?optimize ()] is a JIT wrapper.
+    ?optimize ?warmup ()] is a JIT wrapper.
 
     Provide either [fxn] (the function to JIT) or [captured]
     (a pre-captured schedule).  When [captured] is provided,
@@ -412,14 +415,17 @@ val create :
     {- [prune] removes kernels whose outputs are not reachable
        from the inputs.  Defaults to [false].}
     {- [optimize] re-runs the memory planner after capture for
-       tighter allocation.  Defaults to [false].}}
+       tighter allocation.  Defaults to [false].}
+    {- [warmup] controls whether a wrapped function starts with an eager
+       warmup before capture. It defaults to [true]. Set it to [false] when
+       the caller has already performed that warmup.}}
 
     Raises [Invalid_argument] if neither [fxn] nor [captured]
     is provided. *)
 
 val reset : 'a tiny_jit -> unit
-(** [reset t] resets [t] to the warmup phase, discarding any
-    captured schedule.
+(** [reset t] discards the captured schedule and returns [t] to its initial
+    warmup or capture phase.
 
     Raises [Invalid_argument] if [t] was created without a
     function. *)
@@ -451,5 +457,6 @@ val call :
     {ul
     {- capture is attempted while another capture is in progress,}
     {- the capture produces no linears,}
+    {- a scheduled kernel argument has no resolved runtime buffer,}
     {- inputs mismatch on replay (count, size, dtype, or
        device).}} *)

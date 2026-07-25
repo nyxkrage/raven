@@ -154,7 +154,11 @@ module Buffer : sig
       and spanning [size] elements of [dtype]. The view shares the base buffer's
       allocator and spec.
 
-      Raises [Invalid_argument] if [offset] is negative or [>= nbytes b]. *)
+      Nested view offsets are relative to their parent and accumulate into an
+      absolute base-buffer offset.
+
+      Raises [Invalid_argument] if [size] or [offset] is negative, [dtype] has
+      no storage, the byte size overflows, or the view extends beyond [b]. *)
 
   (** {1:identity Identity and metadata} *)
 

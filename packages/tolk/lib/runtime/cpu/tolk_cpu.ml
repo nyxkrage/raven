@@ -71,7 +71,10 @@ let raw_allocator =
     copyin = cpu_copyin;
     copyout = cpu_copyout;
     addr = Fun.id;
-    offset = None;
+    offset =
+      Some
+        (fun buf _ offset ->
+          Nativeint.add buf (Nativeint.of_int offset));
     transfer = None;
     supports_transfer = false;
     copy_from_disk = None;

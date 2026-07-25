@@ -64,6 +64,11 @@ thread.
   Its Ampere path uses adaptive tensor-core tiles and asynchronous staging.
 - Lower `Nx.erf` through CHLO in the experimental PJRT backend, enabling exact
   GELU and other error-function computations on XLA CPU and CUDA devices.
+- Fix Tolk-backed `Rune.jit` capture and replay to keep scalar inputs dynamic,
+  supply generated buffers in kernel argument order, validate exact input
+  shapes, synchronize results, and capture on the documented second call.
+- Preserve dynamic inputs through `jit (grad f)` when a derivative uses `cos`,
+  instead of freezing a value computed from the capture placeholder.
 - Add experimental `[@@rune.kernel.cuda]` support for prebuilt PJRT CUDA FFI
   kernels. Forward and VJP handlers can be supplied independently, while the
   annotated Rune body remains the eager, CPU, JVP, `vmap`, and missing-handler
@@ -76,6 +81,20 @@ thread.
   `vmap`. Using `set_item`, `set_slice`, `blit`, or `assign` inside these
   transformations now raises `Invalid_argument` with a message directing users
   to use `scatter` instead.
+
+### Tolk
+
+- Preserve generated kernel parameter order and reject unresolved buffer slots
+  before eager or JIT dispatch, preventing positional ABI shifts and native
+  crashes.
+- Bind cached runners to their actual device instance while sharing compiled
+  programs, so same-name devices execute and synchronize the same queue.
+- Decompose `sin`, `exp2`, and `log2` for the freestanding Clang CPU runtime,
+  which cannot link C math-library symbols.
+- Support bounded, composable offset buffer views on CPU and preserve byte
+  offsets when rebuilding view inputs during JIT replay.
+- Add `~warmup` to `Jit.create`, allowing wrappers with their own eager warmup
+  to begin directly with capture.
 
 ### Kaun
 

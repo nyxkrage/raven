@@ -169,10 +169,10 @@ val get_runner :
   Tolk_ir.Kernel.t ->
   Compiled_runner.t
 (** [get_runner ~device ~get_program ast] is a compiled runner for
-    [ast] on [device]. Returns a cached runner when available;
-    on a miss, calls [get_program ast] to compile the kernel and
-    caches the result. A base-device entry is shared across
-    device instances with the same compiler and renderer. *)
+    [ast] on [device]. Returns a cached runner for that device instance when
+    available; on a miss, calls [get_program ast] to compile the kernel and
+    caches the result. Compiled program specifications are shared across
+    equivalent device instances, but runtime runners remain device-bound. *)
 
 (** {1:exec_item Execution items} *)
 
@@ -217,7 +217,9 @@ module Exec_item : sig
       {!get_runner}; BUFFER_VIEWs become {!view_op}; COPYs become
       {!buffer_copy}.
 
-      Returns [t] unchanged if the runner is already set. *)
+      Returns [t] unchanged if the runner is already set.
+
+      Raises [Invalid_argument] if a buffer argument is unresolved. *)
 
   val run :
     t ->
@@ -228,14 +230,14 @@ module Exec_item : sig
     float option
   (** [run t ?var_vals ?wait ?do_update_stats ()] dispatches [t]'s
       runner. Variable bindings are [t]'s fixed bindings merged
-      with [var_vals]. [None] buffer slots are skipped; remaining
-      buffers are allocated if needed.
+      with [var_vals]. Buffers are allocated if needed.
 
       [var_vals] defaults to [[]]. [wait] defaults to [false]
       (forced to [true] when [DEBUG >= 2]). [do_update_stats]
       defaults to [true].
 
-      Raises [Invalid_argument] if the runner has not been set. *)
+      Raises [Invalid_argument] if the runner has not been set or a buffer
+      argument is unresolved. *)
 end
 
 (** {1:run_schedule Schedule execution} *)

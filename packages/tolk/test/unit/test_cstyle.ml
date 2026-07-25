@@ -795,6 +795,15 @@ let () =
         ];
       group "Non-native Rewrites"
         [
+          test "clang decomposes unlinked transcendentals" (fun () ->
+            List.iter
+              (fun renderer ->
+                let ops = Renderer.supported_ops renderer in
+                is_false ops.has_sin;
+                is_false ops.has_exp2;
+                is_false ops.has_log2;
+                is_true ops.has_sqrt)
+              [ Cstyle.clang; Cstyle.clang_no_abi ]);
           (* bf16 promotion is handled by extra_matcher at the Kernel level
              (during codegen), not at render time.  Verify the matcher is set. *)
           test "clang has bf16 extra_matcher" (fun () ->

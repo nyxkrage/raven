@@ -1,5 +1,14 @@
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_4(float* restrict data0_4, float* restrict data1_4) {
+static void E_4_(float* restrict data0_4, float* restrict data1_4, float* restrict data2_4, float* restrict data3_4) {
   float4 val0 = (*((float4*)((data1_4+0))));
-  *((float4*)((data0_4+0))) = (float4){(val0[0]*2.0f),(val0[1]*2.0f),(val0[2]*2.0f),(val0[3]*2.0f)};
+  float4 val1 = (*((float4*)((data2_4+0))));
+  float4 val2 = (*((float4*)((data3_4+0))));
+  float alu0 = ((val1[0]+1.0f)*val2[0]);
+  float alu1 = ((val1[1]+1.0f)*val2[1]);
+  float alu2 = ((val1[2]+1.0f)*val2[2]);
+  float alu3 = ((val1[3]+1.0f)*val2[3]);
+  *((float4*)((data0_4+0))) = (float4){(val0[0]+alu0+alu0),(val0[1]+alu1+alu1),(val0[2]+alu2+alu2),(val0[3]+alu3+alu3)};
+}
+void E_4(const unsigned long long *bufs, const long long *vals) {
+  E_4_((float*)bufs[0], (float*)bufs[1], (float*)bufs[2], (float*)bufs[3]);
 }

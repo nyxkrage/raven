@@ -821,7 +821,7 @@ let bufferize_to_store counter n =
    converts a STORE/END subtree into a CALL(kernel SINK). *)
 type split_context = {
   mutable slot : int;
-  buf_map : (int, T.t) Hashtbl.t;
+  buffer_args : (int, T.t) Hashtbl.t;
   vars : (int, T.t) Hashtbl.t;
   mutable range_ctr : int;
   mutable opts : K.Opt.t list option;
@@ -831,7 +831,7 @@ type split_context = {
 
 let create_split_context () = {
   slot = 0;
-  buf_map = Hashtbl.create 16;
+  buffer_args = Hashtbl.create 16;
   vars = Hashtbl.create 4;
   range_ctr = 0;
   opts = None;
@@ -852,6 +852,7 @@ let debuf ctx shapes n =
   let ptr_dt = D.Ptr.create (D.val_of dtype) ~addrspace:D.Global ~size in
   let slot = ctx.slot in
   ctx.slot <- ctx.slot + 1;
+  Hashtbl.replace ctx.buffer_args slot n;
   let ret = T.param ~slot ~dtype:(D.Ptr ptr_dt) () in
   (* Use multi-dim shape from buf_shapes (precomputed from INDEX consumers)
      when available, falling back to shapes. *)
@@ -865,8 +866,6 @@ let debuf ctx shapes n =
   in
   (* XXX tinygrad distinguishes max_shape (static upper bound) from shape
      (possibly symbolic) and adds a shrink when they differ. *)
-  if not (Hashtbl.mem ctx.buf_map (T.tag n)) then
-    Hashtbl.replace ctx.buf_map (T.tag n) n;
   Some ret
 
 (* Handle AFTER/MSTACK/MSELECT during kernel split: record the buffer
@@ -886,9 +885,20 @@ let handle_after ctx n =
     let buf = match T.view buf with
       | Mstack _ | Mselect _ -> List.hd (T.children buf)
       | _ -> buf in
-    assert (not (Hashtbl.mem ctx.buf_map (T.tag buf)));
-    Hashtbl.replace ctx.buf_map (T.tag buf) n;
-    Some buf
+    match T.view (T.base buf) with
+    | Param { slot; _ } ->
+        let argument =
+          T.graph_rewrite
+            (fun node ->
+              match T.view node with
+              | Param { slot; device = None; _ } ->
+                  Hashtbl.find_opt ctx.buffer_args slot
+              | _ -> None)
+            n
+        in
+        Hashtbl.replace ctx.buffer_args slot argument;
+        Some buf
+    | _ -> failwith "handle_after: expected rewritten buffer parameter"
 
 (* Cycle detection: verify each buffer is accessed through a single
    index path. Tinygrad compares idx.src[0].op (operation type); we
@@ -1009,7 +1019,7 @@ let linearize_idxs idxs =
    Each tensor node maps 1:1 to its kernel equivalent.  Shaped_wmma
    should already be lowered by earliest_rewrites; hitting it here
    is a pipeline bug. *)
-let tensor_subtree_to_kernel root =
+let tensor_subtree_to_kernel ?param_slots root =
   let slice = T.toposort root in
   let tbl : (int, K.t) Hashtbl.t = Hashtbl.create (List.length slice) in
   let lookup n = match Hashtbl.find_opt tbl (T.tag n) with
@@ -1058,7 +1068,10 @@ let tensor_subtree_to_kernel root =
           let pt = match dtype with
             | D.Ptr p -> p
             | D.Val v -> D.Ptr.create v ~addrspace:D.Global ~size:1 in
-          K.param ~idx:slot ~dtype:pt
+          let idx = match param_slots with
+            | None -> slot
+            | Some slots -> Hashtbl.find slots slot in
+          K.param ~idx ~dtype:pt
       | Bind { var; _ } -> lookup var
       | Contiguous { src; _ } | Reshape { src; _ } | Expand { src; _ }
       | Pad { src; _ } | Shrink { src; _ } | Permute { src; _ }
@@ -1083,6 +1096,36 @@ let open_ranges n =
     | _ -> [])
     (T.toposort n) in
   List.filter (fun r -> not (List.exists (fun e -> e == r) closed)) all
+
+(* Keep only buffer parameters that remain reachable from the rewritten kernel
+   body and map them densely when converting to kernel IR. Parameters used
+   solely by dependency calls must stay inside their AFTER argument; leaving
+   them in the outer CALL would create holes in the native buffer ABI. *)
+let dense_buffer_params ctx ret =
+  let slots =
+    T.toposort ret
+    |> List.filter_map (fun node ->
+           match T.view node with
+           | Param { slot; device = None; _ } -> Some slot
+           | _ -> None)
+    |> List.sort_uniq Int.compare
+  in
+  let dense_slots : (int, int) Hashtbl.t = Hashtbl.create (List.length slots) in
+  List.iteri
+    (fun dense slot -> Hashtbl.replace dense_slots slot dense)
+    slots;
+  let bufs =
+    List.map
+      (fun slot ->
+        match Hashtbl.find_opt ctx.buffer_args slot with
+        | Some buffer -> buffer
+        | None ->
+            failwith
+              (Printf.sprintf
+                 "dense_buffer_params: no argument for buffer slot %d" slot))
+      slots
+  in
+  (bufs, dense_slots)
 
 (* Convert a STORE/END subtree into a CALL(kernel SINK, bufs, vars). *)
 let split_store shapes n =
@@ -1135,6 +1178,7 @@ let split_store shapes n =
           mop_through_index local_shapes;
         ] in
         let ret = T.graph_rewrite ~name:"kernel_split" rewrite n in
+        let bufs, param_slots = dense_buffer_params ctx ret in
         (* Determine callee type based on the stored value.
            If the END already wraps a CALL (the inner STORE was split
            first in the bottom-up pass), nothing more to do. *)
@@ -1150,8 +1194,6 @@ let split_store shapes n =
         begin match stored with
         | None -> None
         | Some stored ->
-        let bufs = Hashtbl.fold (fun _ v acc -> v :: acc)
-          ctx.buf_map [] in
         let vars = Hashtbl.fold (fun _ v acc -> v :: acc)
           ctx.vars [] in
         let info : T.call_info = {
@@ -1173,7 +1215,7 @@ let split_store shapes n =
                   dont_use_locals = false; applied_opts = [];
                   opts_to_apply = ctx.opts; estimates = None }
                 [ret] in
-              Ast (tensor_subtree_to_kernel kernel_sink)
+              Ast (tensor_subtree_to_kernel ~param_slots kernel_sink)
         in
         Some (T.call ~callee ~args:(bufs @ vars) ~info ~dtype)
         end

@@ -94,6 +94,9 @@ let test_jit_replay_no_recompile () =
       equal int 2 !call_count;
       let _ = f_jit x in
       (* replay: f should NOT be called *)
+      equal int 2 !call_count;
+      let _ = f_jit x in
+      (* later replays should also bypass f *)
       equal int 2 !call_count
 
 let test_jit_replay_different_values () =
@@ -102,29 +105,66 @@ let test_jit_replay_different_values () =
   | Some dev ->
       let f x = T.mul x (T.scalar T.float32 3.0) in
       let f_jit = T.jit ~device:dev f in
-      let _ = f_jit (T.scalar T.float32 2.0) in
+      let warmup = f_jit (T.scalar T.float32 2.0) in
       (* warmup *)
-      let _ = f_jit (T.scalar T.float32 2.0) in
+      check_scalar ~eps "warmup 2*3" 6.0 (scalar_value warmup);
+      let capture = f_jit (T.scalar T.float32 3.0) in
       (* capture *)
+      check_scalar ~eps "capture 3*3" 9.0 (scalar_value capture);
       let result = f_jit (T.scalar T.float32 7.0) in
       (* replay *)
-      check_scalar ~eps "replay 7*3" 21.0 (scalar_value result)
+      check_scalar ~eps "replay 7*3" 21.0 (scalar_value result);
+      let result = f_jit (T.scalar T.float32 11.0) in
+      check_scalar ~eps "replay 11*3" 33.0 (scalar_value result)
 
 let test_jit_shape_mismatch_rejected () =
   match get_cpu_device () with
   | None -> ()
   | Some dev ->
-      let f x = T.add x x in
+      let call_count = ref 0 in
+      let f x =
+        incr call_count;
+        T.add x x
+      in
       let f_jit = T.jit ~device:dev f in
-      let x4 = T.full T.float32 [| 4 |] 1.0 in
-      let x8 = T.full T.float32 [| 8 |] 1.0 in
-      let _ = f_jit x4 in
+      let warmup = T.full T.float32 [| 2; 2 |] 1.0 in
+      let captured = T.full T.float32 [| 4 |] 2.0 in
+      let mismatch = T.full T.float32 [| 2; 2 |] 3.0 in
+      let valid = T.full T.float32 [| 4 |] 4.0 in
+      let _ = f_jit warmup in
       (* warmup *)
-      let _ = f_jit x4 in
+      let _ = f_jit captured in
       (* capture *)
       let raised = ref false in
-      (try ignore (f_jit x8) with Invalid_argument _ -> raised := true);
-      is_true !raised
+      (try ignore (f_jit mismatch) with Invalid_argument _ -> raised := true);
+      is_true !raised;
+      equal int 2 !call_count;
+      let result = f_jit valid in
+      equal int 2 !call_count;
+      check_rune "valid replay after shape mismatch"
+        (T.full T.float32 [| 4 |] 8.0)
+        result
+
+let test_jit_captured_left_operand () =
+  match get_cpu_device () with
+  | None -> ()
+  | Some dev ->
+      let bias = T.create T.float32 [| 4 |] [| 10.0; 20.0; 30.0; 40.0 |] in
+      let f x = T.sub bias x in
+      let f_jit = T.jit ~device:dev f in
+      let _ = f_jit (T.create T.float32 [| 4 |] [| 1.0; 2.0; 3.0; 4.0 |]) in
+      let capture =
+        f_jit (T.create T.float32 [| 4 |] [| 2.0; 3.0; 4.0; 5.0 |])
+      in
+      check_rune "captured left operand during capture"
+        (T.create T.float32 [| 4 |] [| 8.0; 17.0; 26.0; 35.0 |])
+        capture;
+      let replay =
+        f_jit (T.create T.float32 [| 4 |] [| 3.0; 4.0; 5.0; 6.0 |])
+      in
+      check_rune "captured left operand during replay"
+        (T.create T.float32 [| 4 |] [| 7.0; 16.0; 25.0; 34.0 |])
+        replay
 
 let test_jit_chain () =
   match get_cpu_device () with
@@ -156,6 +196,19 @@ let test_jit_reduce () =
       let result = f_jit x in
       check_scalar ~eps "sum [3;3;3;3]" 12.0 (scalar_value result)
 
+let test_jit_large_reduce () =
+  match get_cpu_device () with
+  | None -> ()
+  | Some dev ->
+      let f x = T.sum ~axes:[ 0 ] x in
+      let f_jit = T.jit ~device:dev f in
+      let x1 = T.full T.float32 [| 16_384 |] 1.0 in
+      let x2 = T.full T.float32 [| 16_384 |] 2.0 in
+      let _ = f_jit x1 in
+      let _ = f_jit x1 in
+      let result = f_jit x2 in
+      check_scalar ~eps "large reduction replay" 32_768.0 (scalar_value result)
+
 (* ───── Test runner ───── *)
 
 let () =
@@ -173,7 +226,9 @@ let () =
           test "replay without recompile" test_jit_replay_no_recompile;
           test "replay different values" test_jit_replay_different_values;
           test "shape mismatch rejected" test_jit_shape_mismatch_rejected;
+          test "captured left operand" test_jit_captured_left_operand;
           test "chain (x+1)*2" test_jit_chain;
           test "reduce sum" test_jit_reduce;
+          test "large reduction replay" test_jit_large_reduce;
         ];
     ]
