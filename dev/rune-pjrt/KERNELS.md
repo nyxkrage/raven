@@ -3,7 +3,8 @@
 Status: exploratory implementation. The prebuilt-library API, unary-function
 PPX, forward and reverse-mode custom calls, and CUDA loading path described
 below are implemented, but none of them is stable. CUDA source compilation,
-multiple arguments, and multiple results remain design work.
+PPX support for multiple arguments, and multiple results remain design work.
+The low-level FFI path accepts multiple packed tensor arguments.
 
 This document describes how Raven functions can use custom CUDA kernels inside
 PJRT programs without giving up a normal Raven implementation. The regular
@@ -277,6 +278,60 @@ The current PPX supports only:
 
 Tuples, multiple results, labelled arguments, recursive definitions, and
 arbitrary pytrees should wait until concrete kernels require them.
+
+## Grouped GEMM building block
+
+`Rune_pjrt.Grouped_gemm` is the first multi-input CUDA building block. It
+targets the packed expert computation used by sparse feed-forward networks:
+
+```ocaml
+let grouped_gemm =
+  Rune_pjrt.Grouped_gemm.create
+    ~library:"kernels/grouped_gemm.so"
+    ()
+
+let expert_output =
+  Rune_pjrt.Grouped_gemm.run grouped_gemm
+    ~lhs:routed_tokens
+    ~rhs:expert_weights
+    ~group_sizes:tokens_per_expert
+```
+
+The inputs and output use this contract:
+
+| Tensor | Dtype | Shape | Meaning |
+| --- | --- | --- | --- |
+| `lhs` | f16, bf16, or f32 | `[rows; k]` | Tokens packed by expert |
+| `rhs` | same as `lhs` | `[groups; k; n]` | One matrix per expert |
+| `group_sizes` | i32 | `[groups]` | Contiguous row count per expert |
+| result | same as `lhs` | `[rows; n]` | Products in packed row order |
+
+Group sizes may be zero, must be non-negative, and must sum to `rows`. Their
+values remain dynamic across executions of a compiled program. The CUDA kernel
+uses float32 accumulation for all supported input dtypes. Non-CUDA execution
+uses `Grouped_gemm.reference`, which is expressed in ordinary Nx operations
+and therefore also provides the differentiation fallback.
+
+Rows are already in expert-major order at this boundary. Routing should build
+that permutation once, reuse it for both sparse feed-forward projections, and
+apply the inverse permutation after the expert computation. The grouped GEMM
+does not accept or sort expert indices itself. Since expert IDs occupy a small
+bounded range, the intended routing primitive is a histogram, prefix sum, and
+scatter rather than a comparison sort.
+
+The bundled shared library is opt-in:
+
+```sh
+RUNE_PJRT_CUDA_KERNELS=enabled \
+  dune build dev/rune-pjrt/kernels/grouped_gemm.so
+```
+
+On Ampere and newer GPUs, aligned float16 and bfloat16 problems use adaptive
+32- or 64-row tensor-core tiles, float32 accumulation, double-buffered
+`cp.async` loads, and skewed shared-memory layouts. Shapes whose inner or
+output dimension is not a multiple of eight, plus float32 inputs, use the
+generic SIMT path. The library contains native `sm_86` code and `compute_80`
+PTX for forward JIT compilation.
 
 ## Dispatch semantics
 

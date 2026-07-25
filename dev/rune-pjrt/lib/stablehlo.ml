@@ -24,6 +24,7 @@ let tensor_type (desc : Ir.desc) =
   let elt =
     match desc.dtype with
     | "float16" -> "f16"
+    | "bfloat16" -> "bf16"
     | "float32" -> "f32"
     | "float64" -> "f64"
     | "int8" -> "i8"

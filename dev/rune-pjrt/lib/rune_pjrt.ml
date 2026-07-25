@@ -8,6 +8,7 @@ module Causal_lm = Causal_lm
 module Device = Device
 module Error = Error
 module Ffi = Ffi
+module Grouped_gemm = Grouped_gemm
 module Ir = Ir
 module Runtime = Runtime
 module Signature = Signature

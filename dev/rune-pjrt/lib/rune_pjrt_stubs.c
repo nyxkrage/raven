@@ -145,6 +145,7 @@ static int rune_dtype_size(const char* dtype) {
   if (strcmp(dtype, "float32") == 0) return 4;
   if (strcmp(dtype, "float64") == 0) return 8;
   if (strcmp(dtype, "float16") == 0) return 2;
+  if (strcmp(dtype, "bfloat16") == 0) return 2;
   if (strcmp(dtype, "int8") == 0) return 1;
   if (strcmp(dtype, "uint8") == 0) return 1;
   if (strcmp(dtype, "int16") == 0) return 2;
@@ -161,6 +162,7 @@ static PJRT_Buffer_Type rune_pjrt_type_of_dtype(const char* dtype) {
   if (strcmp(dtype, "float32") == 0) return PJRT_Buffer_Type_F32;
   if (strcmp(dtype, "float64") == 0) return PJRT_Buffer_Type_F64;
   if (strcmp(dtype, "float16") == 0) return PJRT_Buffer_Type_F16;
+  if (strcmp(dtype, "bfloat16") == 0) return PJRT_Buffer_Type_BF16;
   if (strcmp(dtype, "int8") == 0) return PJRT_Buffer_Type_S8;
   if (strcmp(dtype, "uint8") == 0) return PJRT_Buffer_Type_U8;
   if (strcmp(dtype, "int16") == 0) return PJRT_Buffer_Type_S16;

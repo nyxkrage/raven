@@ -14,3 +14,22 @@
    %{dep:causal_scaled_softmax.cu}
    -o
    %{target})))
+
+(rule
+ (target grouped_gemm.so)
+ (enabled_if (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
+ (deps
+  grouped_gemm.cu
+  (source_tree ../../../vendor/xla/xla/ffi/api))
+ (action
+  (run nvcc
+   -std=c++17
+   -O3
+   -gencode=arch=compute_86,code=sm_86
+   -gencode=arch=compute_80,code=compute_80
+   -shared
+   -Xcompiler=-fPIC
+   -I%{workspace_root}/vendor/xla
+   %{dep:grouped_gemm.cu}
+   -o
+   %{target})))

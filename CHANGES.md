@@ -59,6 +59,9 @@ thread.
 
 ### Rune
 
+- Add `Rune_pjrt.Grouped_gemm` with an ordinary Nx fallback and an opt-in
+  f16/bf16/f32 CUDA FFI kernel for packed sparse-expert matrix multiplication.
+  Its Ampere path uses adaptive tensor-core tiles and asynchronous staging.
 - Lower `Nx.erf` through CHLO in the experimental PJRT backend, enabling exact
   GELU and other error-function computations on XLA CPU and CUDA devices.
 - Add experimental `[@@rune.kernel.cuda]` support for prebuilt PJRT CUDA FFI
