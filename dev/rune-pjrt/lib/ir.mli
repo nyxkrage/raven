@@ -67,6 +67,16 @@ type ffi_handler = {
   target : string;
 }
 
+type triton_kernel = {
+  name : string;
+  ir : string;
+  num_warps : int;
+  num_stages : int;
+  grid_x : int;
+  grid_y : int;
+  grid_z : int;
+}
+
 type op =
   | Parameter of int
   | Constant of literal
@@ -101,6 +111,7 @@ type op =
   | Gather of { data : node_id; indices : node_id; axis : int }
   | Matmul of { lhs : node_id; rhs : node_id }
   | Custom_call of { handler : ffi_handler; inputs : node_id list }
+  | Triton_call of { kernel : triton_kernel; inputs : node_id list }
   | Assign of { dst : node_id; src : node_id }
   | Unsupported of string
 

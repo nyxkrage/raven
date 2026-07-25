@@ -72,6 +72,16 @@ type ffi_handler = {
   target : string;
 }
 
+type triton_kernel = {
+  name : string;
+  ir : string;
+  num_warps : int;
+  num_stages : int;
+  grid_x : int;
+  grid_y : int;
+  grid_z : int;
+}
+
 type op =
   | Parameter of int
   | Constant of literal
@@ -106,6 +116,7 @@ type op =
   | Gather of { data : node_id; indices : node_id; axis : int }
   | Matmul of { lhs : node_id; rhs : node_id }
   | Custom_call of { handler : ffi_handler; inputs : node_id list }
+  | Triton_call of { kernel : triton_kernel; inputs : node_id list }
   | Assign of { dst : node_id; src : node_id }
   | Unsupported of string
 
@@ -162,6 +173,7 @@ let operands = function
   | Gather { data; indices; _ } -> [ data; indices ]
   | Matmul { lhs; rhs } -> [ lhs; rhs ]
   | Custom_call { inputs; _ } -> inputs
+  | Triton_call { inputs; _ } -> inputs
   | Assign { dst; src } -> [ dst; src ]
 
 let unary_name = function
@@ -236,6 +248,7 @@ let op_name = function
   | Gather _ -> "gather"
   | Matmul _ -> "matmul"
   | Custom_call { handler; _ } -> "custom_call[" ^ handler.target ^ "]"
+  | Triton_call { kernel; _ } -> "triton_call[" ^ kernel.name ^ "]"
   | Assign _ -> "assign"
   | Unsupported name -> name
 
@@ -384,6 +397,8 @@ let pp_node ppf (node : node) =
   | Matmul { lhs; rhs } -> Format.fprintf ppf "matmul(%%%d, %%%d)" lhs rhs
   | Custom_call { handler; inputs } ->
       Format.fprintf ppf "custom_call[%s](%s)" handler.target (pp_inputs inputs)
+  | Triton_call { kernel; inputs } ->
+      Format.fprintf ppf "triton_call[%s](%s)" kernel.name (pp_inputs inputs)
   | Assign { dst; src } -> Format.fprintf ppf "assign(%%%d, %%%d)" dst src
   | Unsupported name -> Format.fprintf ppf "unsupported(%s)" name
 

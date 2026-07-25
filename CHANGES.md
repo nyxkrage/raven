@@ -59,6 +59,9 @@ thread.
 
 ### Rune
 
+- Add `Rune_pjrt.Triton` for embedding TTIR kernels in PJRT CUDA programs.
+  XLA's bundled Triton compiler now compiles and launches them as part of the
+  PJRT executable, while ordinary Raven code remains the eager and CPU fallback.
 - Add `Rune_pjrt.Grouped_gemm` with an ordinary Nx fallback and an opt-in
   f16/bf16/f32 CUDA FFI kernel for packed sparse-expert matrix multiplication.
   Its Ampere path uses adaptive tensor-core tiles and asynchronous staging.

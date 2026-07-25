@@ -6,6 +6,13 @@ below are implemented, but none of them is stable. CUDA source compilation,
 PPX support for multiple arguments, and multiple results remain design work.
 The low-level FFI path accepts multiple packed tensor arguments.
 
+An exploratory [OCaml CUDA kernel DSL](KERNEL_DSL.md) design sketches a
+Triton-like blocked API, using grouped GEMM as the worked example and retaining
+raw CUDA for kernels that need exact low-level control. Its first compiler
+integration is implemented: `Rune_pjrt.Triton` embeds TTIR in the StableHLO
+program and XLA's bundled Triton compiler compiles and launches it as part of
+the PJRT CUDA executable.
+
 This document describes how Raven functions can use custom CUDA kernels inside
 PJRT programs without giving up a normal Raven implementation. The regular
 function body remains the reference and fallback implementation. When the

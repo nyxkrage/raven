@@ -357,7 +357,8 @@ let supported_op = function
   | Cast _
   | Gather _
   | Matmul _
-  | Custom_call _ ->
+  | Custom_call _
+  | Triton_call _ ->
       true
   | Reduce _ | Arg_reduce _ | Assign _ | Buffer _ | Unsupported _ ->
       false
@@ -534,6 +535,14 @@ let write_op_json artifact_dir oc node =
          \"target\":\"%s\",\"inputs\":"
         (json_escape handler.library) (json_escape handler.symbol)
         (json_escape handler.target);
+      write_json_list oc (fun oc x -> output_string oc (string_of_int x)) inputs;
+      output_char oc '}'
+  | Triton_call { kernel; inputs } ->
+      Printf.fprintf oc
+        "{\"tag\":\"triton_call\",\"name\":\"%s\",\"ir\":\"%s\",\
+         \"num_warps\":%d,\"num_stages\":%d,\"grid\":[%d,%d,%d],\"inputs\":"
+        (json_escape kernel.name) (json_escape kernel.ir) kernel.num_warps
+        kernel.num_stages kernel.grid_x kernel.grid_y kernel.grid_z;
       write_json_list oc (fun oc x -> output_string oc (string_of_int x)) inputs;
       output_char oc '}'
   | Assign { dst; src } ->

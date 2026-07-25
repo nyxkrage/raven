@@ -124,6 +124,19 @@ let pp_bool_array arr =
 let pp_type_list descs =
   descs |> List.map tensor_type |> String.concat ", "
 
+let mlir_string value =
+  let escaped = Buffer.create (String.length value + 2) in
+  Buffer.add_char escaped '"';
+  String.iter
+    (fun char ->
+      let code = Char.code char in
+      if code >= 0x20 && code <= 0x7e && char <> '"' && char <> '\\' then
+        Buffer.add_char escaped char
+      else Buffer.add_string escaped (Printf.sprintf "\\%02X" code))
+    value;
+  Buffer.add_char escaped '"';
+  Buffer.contents escaped
+
 let canonical_layout (desc : Ir.desc) =
   let rank = Array.length desc.shape in
   if rank = 0 then "dense<> : tensor<0xindex>"
@@ -536,6 +549,35 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
             backend_config = {}, call_target_name = %S, operand_layouts = \
             [%s], result_layouts = [%s]} : (%s) -> %s"
            indent node.Ir.id refs handler.target operand_layouts
+           (canonical_layout node.Ir.desc) input_types ty)
+  | Triton_call { kernel; inputs } ->
+      let refs =
+        List.map (op_ref ~arg_name program) inputs |> String.concat ", "
+      in
+      let input_descs =
+        List.map (fun id -> (find_node program id).Ir.desc) inputs
+      in
+      let input_types =
+        List.map tensor_type input_descs |> String.concat ", "
+      in
+      let operand_layouts =
+        List.map canonical_layout input_descs |> String.concat ", "
+      in
+      let backend_config =
+        Printf.sprintf
+          "{name = %s, ir = %s, num_stages = %d : i32, num_warps = %d : i32, \
+           grid_x = %d : i32, grid_y = %d : i32, grid_z = %d : i32, debug = \
+           false, is_tma_allowed = false, global_scratch_memory_size = 0 : i32}"
+          (mlir_string kernel.name) (mlir_string kernel.ir) kernel.num_stages
+          kernel.num_warps kernel.grid_x kernel.grid_y kernel.grid_z
+      in
+      Some
+        (Printf.sprintf
+           "%s%%v%d = \"stablehlo.custom_call\"(%s) {api_version = 1 : i32, \
+            backend_config = %s, call_target_name = \
+            \"__gpu$xla.gpu.triton\", operand_layouts = [%s], result_layouts \
+            = [%s]} : (%s) -> %s"
+           indent node.Ir.id refs (mlir_string backend_config) operand_layouts
            (canonical_layout node.Ir.desc) input_types ty)
   | Cat { inputs; axis } ->
       let refs =

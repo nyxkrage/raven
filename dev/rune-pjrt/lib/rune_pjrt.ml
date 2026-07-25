@@ -14,6 +14,7 @@ module Runtime = Runtime
 module Signature = Signature
 module Stablehlo = Stablehlo
 module Trace = Trace
+module Triton = Triton
 
 type packed = Trace.packed = Tensor : ('a, 'b) Nx.t -> packed
 

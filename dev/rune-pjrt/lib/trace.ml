@@ -147,6 +147,32 @@ let handler env =
               Error.raise (Error.Unsupported_effect name))
         in
         match eff with
+        | Triton.Internal.Call request when env.enable_ffi ->
+            Some
+              (fun (k : (a, _) Effect.Deep.continuation) ->
+                let output = request.fallback () in
+                let inputs =
+                  List.map
+                    (fun (Triton.Tensor input) -> ensure_id env input)
+                    request.inputs
+                in
+                let source = request.kernel in
+                let kernel : Ir.triton_kernel =
+                  {
+                    name = source.name;
+                    ir = source.ir;
+                    num_warps = source.num_warps;
+                    num_stages = source.num_stages;
+                    grid_x = source.grid_x;
+                    grid_y = source.grid_y;
+                    grid_z = source.grid_z;
+                  }
+                in
+                ignore
+                  (bind_node env output (Ir.Triton_call { kernel; inputs }));
+                Effect.Deep.continue k (Triton.Internal.Use_kernel output))
+        | Triton.Internal.Call _ ->
+            Some (fun k -> Effect.Deep.continue k Triton.Internal.Use_fallback)
         | Ffi.Internal.Call request when env.enable_ffi ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
