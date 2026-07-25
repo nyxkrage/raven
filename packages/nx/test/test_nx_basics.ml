@@ -538,6 +538,38 @@ let test_astype_int64_to_float32 () =
   let u = Nx.astype Nx.float32 t in
   check_t "astype int64 to float32" [| 3 |] [| 1000.0; 2000.0; 3000.0 |] u
 
+let test_astype_float16_round_trip () =
+  let min_normal = 0.00006103515625 in
+  let min_subnormal = 0.000000059604644775390625 in
+  let t =
+    Nx.create Nx.float32 [| 9 |]
+      [|
+        0.0;
+        1.0;
+        -2.0;
+        16.014;
+        65504.0;
+        min_normal;
+        min_subnormal;
+        1.00048828125;
+        1.00146484375;
+      |]
+  in
+  let u = Nx.astype Nx.float16 t |> Nx.astype Nx.float32 in
+  check_t ~eps:1e-7 "astype float16 round trip" [| 9 |]
+    [|
+      0.0;
+      1.0;
+      -2.0;
+      16.015625;
+      65504.0;
+      min_normal;
+      min_subnormal;
+      1.0;
+      1.001953125;
+    |]
+    u
+
 (* Test Suite Organization *)
 
 let creation_edge_cases =
@@ -670,6 +702,7 @@ let type_conversion =
     test "astype int32 to float32" test_astype_int32_to_float32;
     test "astype float32 to int16" test_astype_float32_to_int16;
     test "astype int64 to float32" test_astype_int64_to_float32;
+    test "astype float16 round trip" test_astype_float16_round_trip;
   ]
 
 let suite =

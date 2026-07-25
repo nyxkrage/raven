@@ -36,6 +36,8 @@ thread.
 
 ### Nx
 
+- Fix float16 conversion in the C backend so casts and float16 operations
+  preserve the mantissa, round ties to even, and retain subnormal values.
 - Remove `~out` parameter from all backend compute operations. Operations now
   allocate and return their result instead of writing to a caller-provided
   buffer. This simplifies the effect system, fixes vmap, and prepares the

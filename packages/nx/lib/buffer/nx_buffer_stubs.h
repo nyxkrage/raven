@@ -95,66 +95,77 @@ static inline uint16_t float_to_half(float f) {
     float f;
     uint32_t i;
   } u = {.f = f};
-  uint32_t i = u.i;
-  uint16_t h_sgn = (uint16_t)((i & 0x80000000u) >> 16);
-  uint32_t f_m = i & 0x00FFFFFFu;
-  uint32_t f_e = (i & 0x7F800000u) >> 23;
+  uint16_t sign = (uint16_t)((u.i >> 16) & 0x8000u);
+  uint32_t exponent = (u.i >> 23) & 0xFFu;
+  uint32_t mantissa = u.i & 0x7FFFFFu;
 
-  if (f_e == 0xFF) { /* Inf or NaN */
-    h_sgn |= 0x7C00u;
-    h_sgn |= (f_m != 0); /* NaN if mantissa != 0 */
-    return h_sgn;
+  if (exponent == 0xFFu) {
+    if (mantissa == 0) return sign | 0x7C00u;
+    uint16_t payload = (uint16_t)(mantissa >> 13);
+    return sign | 0x7C00u | (payload != 0 ? payload : 1);
   }
-  if (f_e == 0) { /* Denormal or zero */
-    return h_sgn; /* Flush to zero */
-  }
-  int exp = (int)f_e - 127 + 15;
-  if (exp >= 31) return h_sgn | 0x7C00u; /* Inf */
-  if (exp <= 0) return h_sgn;            /* Underflow */
 
-  uint32_t mant = f_m >> 13;
-  uint32_t round = (f_m >> 12) & 1;
-  if (round) {
-    mant += 1;
-    if (mant >= (1u << 10)) {
-      mant = 0;
-      exp += 1;
+  int half_exponent = (int)exponent - 127 + 15;
+  if (half_exponent >= 31) return sign | 0x7C00u;
+  if (half_exponent <= 0) {
+    if (half_exponent < -10) return sign;
+    mantissa |= 0x800000u;
+    int shift = 14 - half_exponent;
+    uint32_t half_mantissa = mantissa >> shift;
+    uint32_t remainder = mantissa & ((1u << shift) - 1u);
+    uint32_t halfway = 1u << (shift - 1);
+    if (remainder > halfway ||
+        (remainder == halfway && (half_mantissa & 1u) != 0)) {
+      half_mantissa += 1;
+    }
+    return sign | (uint16_t)half_mantissa;
+  }
+
+  uint32_t half_mantissa = mantissa >> 13;
+  uint32_t remainder = mantissa & 0x1FFFu;
+  if (remainder > 0x1000u ||
+      (remainder == 0x1000u && (half_mantissa & 1u) != 0)) {
+    half_mantissa += 1;
+    if (half_mantissa == 0x400u) {
+      half_mantissa = 0;
+      half_exponent += 1;
+      if (half_exponent >= 31) return sign | 0x7C00u;
     }
   }
-  return h_sgn | (exp << 10) | (mant & 0x3FFu);
+  return sign | (uint16_t)(half_exponent << 10) |
+         (uint16_t)half_mantissa;
 }
 
 static inline float half_to_float(uint16_t h) {
   uint32_t sign = ((uint32_t)(h & 0x8000u)) << 16;
-  uint32_t exp = (h & 0x7C00u) >> 10;
-  uint32_t mant = h & 0x3FFu;
+  uint32_t exponent = (h >> 10) & 0x1Fu;
+  uint32_t mantissa = h & 0x3FFu;
+  uint32_t bits;
 
-  if (exp == 0x1F) { /* Inf/NaN */
-    exp = 0xFFu << 23;
-    mant = (mant != 0) ? (mant << 13) | 0x400000u : 0;
-  } else if (exp == 0) { /* Denorm or zero */
-    if (mant == 0) {
-      exp = 0;
-    } else { /* Denorm */
-      exp = 1;
-      while ((mant & 0x400u) == 0) {
-        mant <<= 1;
-        exp--;
+  if (exponent == 0x1Fu) {
+    bits = sign | 0x7F800000u | (mantissa << 13);
+    if (mantissa != 0) bits |= 0x400000u;
+  } else if (exponent == 0) {
+    if (mantissa == 0) {
+      bits = sign;
+    } else {
+      int unbiased_exponent = -14;
+      while ((mantissa & 0x400u) == 0) {
+        mantissa <<= 1;
+        unbiased_exponent -= 1;
       }
-      mant &= 0x3FFu;
-      exp = (exp + 112) << 23;
-      mant <<= 13;
+      mantissa &= 0x3FFu;
+      bits = sign | ((uint32_t)(unbiased_exponent + 127) << 23) |
+             (mantissa << 13);
     }
-  } else { /* Normal */
-    exp = (exp + 112) << 23;
-    mant <<= 13;
+  } else {
+    bits = sign | ((exponent + 112u) << 23) | (mantissa << 13);
   }
 
   union {
     float f;
     uint32_t i;
-  } u;
-  u.i = sign | exp | mant;
+  } u = {.i = bits};
   return u.f;
 }
 
