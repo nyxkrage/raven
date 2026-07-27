@@ -12,6 +12,7 @@ let kernel_attribute =
     Fun.id
 
 let error ~loc fmt = Location.raise_errorf ~loc ("rune.kernel.cuda: " ^^ fmt)
+let syntax_error ~loc fmt = Location.raise_errorf ~loc ("rune.kernel: " ^^ fmt)
 
 let longident = function
   | [] -> invalid_arg "ppx_rune_kernel: empty long identifier"
@@ -30,6 +31,11 @@ let call ~loc path arguments = apply ~loc (ident ~loc path) arguments
 let variable ~loc name = evar ~loc name
 let string ~loc value = estring ~loc value
 
+let syntax_call ~loc function_name arguments =
+  call ~loc
+    [ "Rune_pjrt"; "Triton"; "Dsl"; "Syntax"; "Operand"; function_name ]
+    arguments
+
 let list ~loc expressions =
   List.fold_right
     (fun expression rest ->
@@ -39,6 +45,113 @@ let list ~loc expressions =
 
 let tensor ~loc expression =
   construct ~loc [ "Rune_pjrt"; "Ffi"; "Tensor" ] (Some expression)
+
+let unqualified_identifier expression =
+  match expression.pexp_desc with
+  | Pexp_ident { txt = Longident.Lident name; _ } -> Some name
+  | _ -> None
+
+let binary_syntax_operator = function
+  | "+" | "+." -> Some "add"
+  | "-" | "-." -> Some "sub"
+  | "*" | "*." -> Some "mul"
+  | "/" | "/." -> Some "div"
+  | "mod" -> Some "rem"
+  | "land" | "&&" -> Some "bit_and"
+  | "lor" | "||" -> Some "bit_or"
+  | "lxor" -> Some "bit_xor"
+  | "=" -> Some "equal"
+  | "<>" -> Some "not_equal"
+  | "<" -> Some "less"
+  | "<=" -> Some "less_equal"
+  | ">" -> Some "greater"
+  | ">=" -> Some "greater_equal"
+  | _ -> None
+
+let unary_syntax_operator = function
+  | "~-" | "~-." -> Some "neg"
+  | "not" -> Some "not_"
+  | _ -> None
+
+let syntax_operand expression =
+  let loc = expression.pexp_loc in
+  let constructor =
+    match expression.pexp_desc with
+    | Pexp_constant (Pconst_integer (_, None)) -> "int"
+    | Pexp_constant (Pconst_integer (_, Some suffix)) ->
+        syntax_error ~loc
+          "integer literals with the %c suffix are unsupported; use an \
+           ordinary int literal or an explicit Dsl.Value constant"
+          suffix
+    | Pexp_constant (Pconst_float _) -> "float"
+    | Pexp_construct ({ txt = Longident.Lident ("true" | "false"); _ }, None) ->
+        "bool"
+    | _ -> "value"
+  in
+  syntax_call ~loc constructor [ (Nolabel, expression) ]
+
+let extension_expression ~loc name payload =
+  match payload with
+  | PStr [ { pstr_desc = Pstr_eval (expression, []); _ } ] -> expression
+  | _ -> syntax_error ~loc "%s expects exactly one OCaml expression" name
+
+class kernel_expression_mapper =
+  object (self)
+    inherit Ast_traverse.map as super
+
+    method! expression expression =
+      let loc = expression.pexp_loc in
+      let attributes = expression.pexp_attributes in
+      let rewrite function_name arguments =
+        let expression = syntax_call ~loc function_name arguments in
+        { expression with pexp_attributes = attributes }
+      in
+      match expression.pexp_desc with
+      | Pexp_extension ({ txt = "rune.host"; loc }, payload) ->
+          extension_expression ~loc "rune.host" payload
+      | Pexp_extension ({ txt = "rune.kernel"; loc }, _) ->
+          syntax_error ~loc "nested kernel functions are unsupported"
+      | Pexp_apply (operator, [ (Nolabel, lhs); (Nolabel, rhs) ]) -> (
+          match
+            Option.bind (unqualified_identifier operator) binary_syntax_operator
+          with
+          | Some function_name ->
+              let lhs = syntax_operand (self#expression lhs) in
+              let rhs = syntax_operand (self#expression rhs) in
+              rewrite function_name [ (Nolabel, lhs); (Nolabel, rhs) ]
+          | None -> super#expression expression)
+      | Pexp_apply (operator, [ (Nolabel, operand) ]) -> (
+          match
+            Option.bind (unqualified_identifier operator) unary_syntax_operator
+          with
+          | Some function_name ->
+              let operand = syntax_operand (self#expression operand) in
+              rewrite function_name [ (Nolabel, operand) ]
+          | None -> super#expression expression)
+      | _ -> super#expression expression
+  end
+
+let kernel_expression ~loc payload =
+  let expression = extension_expression ~loc "rune.kernel" payload in
+  match expression.pexp_desc with
+  | Pexp_function _ -> (new kernel_expression_mapper)#expression expression
+  | _ ->
+      syntax_error ~loc
+        "annotate the complete kernel builder as [fun%%rune.kernel ... -> ...]"
+
+class kernel_extension_mapper =
+  object
+    inherit Ast_traverse.map as super
+
+    method! expression expression =
+      match expression.pexp_desc with
+      | Pexp_extension ({ txt = "rune.kernel"; loc }, payload) ->
+          kernel_expression ~loc payload
+      | Pexp_extension ({ txt = "rune.host"; loc }, _) ->
+          syntax_error ~loc
+            "[%%rune.host ...] is only valid inside [fun%%rune.kernel]"
+      | _ -> super#expression expression
+  end
 
 type specification = {
   library : string;
@@ -264,7 +377,8 @@ let expand_item item =
         | _ -> assert false)
   | _ -> item
 
-let rewrite_structure structure = List.map expand_item structure
+let rewrite_structure structure =
+  List.map expand_item structure |> (new kernel_extension_mapper)#structure
 
 let () =
   Driver.register_transformation "ppx_rune_kernel" ~impl:rewrite_structure

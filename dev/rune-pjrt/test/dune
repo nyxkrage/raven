@@ -39,4 +39,6 @@
  (package rune-pjrt)
  (modules test_cuda_triton)
  (enabled_if (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
- (libraries rune_pjrt nx rune))
+ (libraries rune_pjrt nx rune)
+ (preprocess
+  (pps ppx_rune_kernel)))

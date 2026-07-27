@@ -24,6 +24,30 @@ let square_fwd x = Nx.mul x x
 let square_bwd x = Nx.mul x x
 [@@rune.kernel.cuda { library = "/proc/self/exe"; bwd = "square_bwd" }]
 
+module D = Rune_pjrt.Triton.Dsl
+
+let syntax_kernel =
+  D.Kernel.define ~name:"ppx_normal_syntax"
+    ~signature:D.Signature.(f32 @-> returning f32)
+    ~grid:(fun _ -> (1, 1, 1))
+    (fun%rune.kernel spec input output ->
+      let offsets =
+        (D.Value.program_id D.X * 4) + D.Value.arange ~start:0 ~stop:4
+      in
+      let mask = offsets >= 0 && offsets < 4 in
+      let values =
+        D.Pointer.load ~mask
+          ~other:(D.Value.zeros D.Dtype.f32 ~shape:[| 4 |])
+          (D.Pointer.offset input offsets)
+      in
+      let result = ((-values * values) + 1.) / 2. in
+      [
+        D.Statement.static_assert
+          [%rune.host D.Spec.input_count spec = 1]
+          "expected one input";
+        D.Statement.store ~mask (D.Pointer.offset output offsets) result;
+      ])
+
 let symbols program =
   Rune_pjrt.Ir.ffi_handlers program
   |> List.map (fun handler -> handler.Rune_pjrt.Ir.symbol)
@@ -43,6 +67,26 @@ let has_op name program =
 let trace_gradient fn x =
   Rune_pjrt.Trace.capture_one (Rune.grad (fun x -> Nx.sum (fn x))) x
   |> fun capture -> capture.Rune_pjrt.Trace.program
+
+let contains text pattern =
+  let text_length = String.length text in
+  let pattern_length = String.length pattern in
+  let rec loop offset =
+    if offset + pattern_length > text_length then false
+    else if String.sub text offset pattern_length = pattern then true
+    else loop (offset + 1)
+  in
+  loop 0
+
+let test_kernel_syntax () =
+  let ir =
+    D.Kernel.to_ttir_for syntax_kernel ~input_shapes:[ [| 4 |] ]
+      ~output_shape:[| 4 |]
+  in
+  List.iter
+    (fun operation ->
+      require ("normal syntax emits " ^ operation) (contains ir operation))
+    [ "arith.addf"; "arith.mulf"; "arith.divf"; "arith.cmpi"; "arith.andi" ]
 
 let test_eager_and_transforms () =
   let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -109,6 +153,7 @@ let test_independent_directions () =
   require "backward-only primal uses Raven operations" (has_op "mul" bwd)
 
 let () =
+  test_kernel_syntax ();
   test_eager_and_transforms ();
   test_cpu_fallback ();
   test_pjrt_cpu_fallback ();

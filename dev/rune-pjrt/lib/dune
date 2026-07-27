@@ -1,6 +1,7 @@
 (library
  (name rune_pjrt)
  (public_name rune-pjrt)
+ (private_modules triton_dsl)
  (libraries nx nx.core nx.buffer nx.effect nx.backend unix)
  (foreign_stubs
   (language c)

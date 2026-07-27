@@ -1,7 +1,7 @@
 opam-version: "2.0"
 synopsis: "PPX syntax for experimental Rune PJRT CUDA kernels"
 description:
-  "Ppx_rune_kernel rewrites annotated Rune functions into PJRT CUDA custom calls with ordinary Rune fallbacks."
+  "Ppx_rune_kernel provides normal staged-expression syntax and rewrites annotated Rune functions into PJRT CUDA custom calls with ordinary Rune fallbacks."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio"]
 license: "ISC"

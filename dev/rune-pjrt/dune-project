@@ -21,7 +21,7 @@
  (name ppx_rune_kernel)
  (synopsis "PPX syntax for experimental Rune PJRT CUDA kernels")
  (description
-  "Ppx_rune_kernel rewrites annotated Rune functions into PJRT CUDA custom calls with ordinary Rune fallbacks.")
+  "Ppx_rune_kernel provides normal staged-expression syntax and rewrites annotated Rune functions into PJRT CUDA custom calls with ordinary Rune fallbacks.")
  (depends
   (ocaml
    (>= 5.2.0))

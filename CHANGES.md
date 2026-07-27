@@ -59,6 +59,14 @@ thread.
 
 ### Rune
 
+- Add a typed `Rune_pjrt.Triton.Dsl` for PJRT CUDA kernels. It supports
+  shape-specialized blocked programs, explicit masked memory, integer and
+  floating-point values, device loops, reductions, mixed-dtype casts, and
+  tensor-core `dot` through the single general `Kernel.define` authoring API.
+  Curried typed signatures and `Kernel.bind` produce ordinary tensor functions
+  with one definition-site Raven fallback and no manual argument packing.
+  `fun%rune.kernel` provides ordinary arithmetic, comparison, and Boolean
+  syntax with contextually typed scalar literals inside staged expressions.
 - Add `Rune_pjrt.Triton` for embedding TTIR kernels in PJRT CUDA programs.
   XLA's bundled Triton compiler now compiles and launches them as part of the
   PJRT executable, while ordinary Raven code remains the eager and CPU fallback.

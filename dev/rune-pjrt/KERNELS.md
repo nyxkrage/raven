@@ -11,7 +11,12 @@ Triton-like blocked API, using grouped GEMM as the worked example and retaining
 raw CUDA for kernels that need exact low-level control. Its first compiler
 integration is implemented: `Rune_pjrt.Triton` embeds TTIR in the StableHLO
 program and XLA's bundled Triton compiler compiles and launches it as part of
-the PJRT CUDA executable.
+the PJRT CUDA executable. `Rune_pjrt.Triton.Dsl` provides a typed blocked
+authoring layer with explicit memory access, shape operations, device loops,
+reductions, and tensor-core dot products. Typed signatures pass input pointers
+directly to kernel builders and preserve curried multi-argument functions.
+`Kernel.bind` attaches the fallback once and returns an ordinary function over
+`Nx.t` arguments without public packing constructors.
 
 This document describes how Raven functions can use custom CUDA kernels inside
 PJRT programs without giving up a normal Raven implementation. The regular
@@ -274,7 +279,7 @@ The typed one-result internal interface and packed input list avoid public
 `call1`, `call2`, and similar arity-specific APIs. The PPX knows the syntactic
 arguments and hides input packing from the user.
 
-The current PPX supports only:
+The current `[@@rune.kernel.cuda]` rewriting supports only:
 
 - non-recursive functions;
 - one positional tensor argument bound to a simple name;

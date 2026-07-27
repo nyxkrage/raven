@@ -1,8 +1,8 @@
 # OCaml CUDA kernel DSL
 
-Status: compiler bridge implemented; high-level DSL remains a design sketch.
-`Rune_pjrt.Triton.Kernel` and `Rune_pjrt.Triton.call` exist. The blocked
-authoring APIs below are deliberately provisional.
+Status: compiler bridge and typed blocked DSL implemented. The worked grouped
+GEMM syntax below predates the concrete API and remains a deliberately
+provisional design sketch.
 
 This document explores a blocked OCaml kernel DSL at roughly Triton's level of
 abstraction. The DSL should make common fused kernels concise while leaving raw
@@ -38,6 +38,9 @@ The authoring model follows Triton's
 [blocked-program model](https://triton-lang.org/main/programming-guide/chapter-1/introduction.html)
 and
 [matrix multiplication tutorial](https://triton-lang.org/main/getting-started/tutorials/03-matrix-multiplication.html).
+The complete public `triton.language` inventory and the exact gaps in the
+current Raven DSL are tracked in
+[`TRITON_LANGUAGE_COVERAGE.md`](TRITON_LANGUAGE_COVERAGE.md).
 
 ## Implemented compiler bridge
 
@@ -101,8 +104,195 @@ let add_one input =
 The TTIR function ABI is all input pointers in packed order followed by the
 single output pointer. The ordinary body is evaluated outside PJRT CUDA and
 while Rune transformations derive fallback behavior. Multiple results,
-scratch buffers, TMA, target capability guards, higher-level TTIR construction,
-and a PPX surface are not implemented yet.
+scratch buffers, TMA, target capability guards, and a statement-level kernel
+frontend are not implemented yet.
+
+## Implemented typed DSL
+
+`Rune_pjrt.Triton.Dsl` constructs a typed expression and statement IR, reuses
+common subexpressions, renders blocked TTIR, specializes code and launch grids
+from traced tensor shapes, and calls the compiler bridge above.
+
+`Kernel.define` is the single kernel-authoring entry point. Even a pointwise
+kernel states its launch geometry and memory accesses explicitly:
+
+```ocaml
+let square_plus_one_definition =
+  let module D = Rune_pjrt.Triton.Dsl in
+  let block_size = 128 in
+  let config = D.Config.make ~block_size ~num_warps:4 () in
+  D.Kernel.define ~name:"square_plus_one"
+    ~signature:D.Signature.(f32 @-> returning f32)
+    ~config
+    ~guard:(fun spec ->
+      D.Spec.input_numel spec 0 = D.Spec.output_numel spec)
+    ~grid:(fun spec ->
+      let numel = D.Spec.output_numel spec in
+      ((numel + block_size - 1) / block_size, 1, 1))
+    (fun%rune.kernel spec input output ->
+      let block = D.Value.int D.Dtype.i32 block_size in
+      let offsets =
+        (D.Value.program_id D.X * block)
+        + D.Value.arange ~start:0 ~stop:block_size
+      in
+      let mask =
+        offsets < D.Value.int D.Dtype.i32 (D.Spec.output_numel spec)
+      in
+      let input =
+        D.Pointer.load ~mask
+          ~other:(D.Value.zeros D.Dtype.f32 ~shape:[| block_size |])
+          (D.Pointer.offset input offsets)
+      in
+      let result = (input * input) + 1. in
+      [
+        D.Statement.store ~mask (D.Pointer.offset output offsets) result;
+      ])
+
+let square_plus_one_kernel =
+  Rune_pjrt.Triton.Dsl.Kernel.bind square_plus_one_definition
+    ~fallback:(fun input ->
+      Nx.add (Nx.mul input input) (Nx.scalar_like input 1.))
+
+let result = square_plus_one_kernel input
+```
+
+The signature declares heterogeneous input and output dtypes. The builder
+receives immutable static shape metadata, typed input pointers, and the output
+pointer:
+
+```ocaml
+let reduce_rows_kernel =
+  let module D = Rune_pjrt.Triton.Dsl in
+  D.Kernel.define
+    ~name:"reduce_rows"
+    ~signature:D.Signature.(f32 @-> returning f32)
+    ~guard:(fun spec ->
+      let input = D.Spec.input_shape spec 0 in
+      Array.length input = 2
+      && input.(1) = 128
+      && input.(0) = D.Spec.output_numel spec)
+    ~grid:(fun spec -> (D.Spec.output_numel spec, 1, 1))
+    (fun%rune.kernel spec input output ->
+      let row = D.Value.program_id D.X in
+      let offsets =
+        (row * 128) + D.Value.arange ~start:0 ~stop:128
+      in
+      let values = D.Pointer.load (D.Pointer.offset input offsets) in
+      [
+        D.Statement.static_assert
+          [%rune.host D.Spec.input_count spec = 1]
+          "expected one input";
+        D.Statement.store
+          (D.Pointer.offset output row)
+          (D.Value.sum ~axis:0 values);
+      ])
+```
+
+The implemented dtypes are f16, bf16, f32, i1, i32, and i64. Values may be
+scalars or statically shaped blocks. The public operations cover typed
+constants, ranges, program coordinates, broadcasting, reshape, permutation,
+casts, comparisons, selection, integer and floating-point arithmetic, math
+functions, reductions, softmax, and f16/bf16/f32 block dot with f32
+accumulation.
+
+`Signature` maps ordinary tensor arguments to equally structured typed pointer
+arguments. Its right-associative `@->` chain makes both builders and bound
+kernels curried, so a two-input definition receives `lhs` and `rhs` separately
+and is called as `kernel lhs rhs`. `Kernel.bind` attaches the one semantic
+fallback at the definition site and returns an ordinary function, packing
+`Nx.t` arguments without a public existential wrapper. `Syntax` provides
+locally scoped value arithmetic, i32-scalar arithmetic, and pointer offset
+operators.
+
+`ppx_rune_kernel` also provides normal syntax throughout an entire kernel
+builder:
+
+```lisp
+(preprocess
+ (pps ppx_rune_kernel))
+```
+
+```ocaml
+(fun%rune.kernel spec input output ->
+  let offsets =
+    (D.Value.program_id D.X * 128)
+    + D.Value.arange ~start:0 ~stop:128
+  in
+  let mask = offsets >= 0 && offsets < 128 in
+  let values =
+    D.Pointer.load ~mask (D.Pointer.offset input offsets)
+  in
+  let result = (-values * values + 1.) / 2. in
+  [
+    D.Statement.static_assert
+      [%rune.host D.Spec.input_count spec = 1]
+      "expected one input";
+    D.Statement.store
+      ~mask (D.Pointer.offset output offsets) result;
+  ])
+```
+
+Inside `fun%rune.kernel`, `+`, `-`, `*`, `/`, `mod`, comparisons, Boolean
+operators, and their floating-point spellings build DSL values. Integer,
+floating-point, and Boolean literals adopt the dtype of a neighboring staged
+value, so the same `1.` source works with f16, bf16, or f32 without promoting
+the expression. Literal-only operations have no dtype anchor and are rejected.
+For a host value such as a shape-derived integer, construct a staged constant
+with `Value.int` before using normal syntax.
+
+The function is the syntax boundary, so one annotation covers every staged
+expression in the builder. Ordinary OCaml arithmetic in `grid` and `guard`
+remains outside it. A rare host-side expression inside the builder uses
+`[%rune.host ...]`, as in the specialization assertion above. Pointer
+arithmetic stays explicit through `Pointer.offset`, because a PPX runs before
+type checking and cannot safely decide whether an arbitrary operand is a value
+or a pointer.
+
+A two-input signature therefore has no tuple or trailing unit argument:
+
+```ocaml
+let gemm_definition =
+  D.Kernel.define
+    ~name:"gemm"
+    ~signature:D.Signature.(f16 @-> f16 @-> returning f32)
+    ~grid
+    (fun spec lhs rhs output ->
+      build_gemm spec lhs rhs output)
+
+let gemm_kernel =
+  D.Kernel.bind gemm_definition
+    ~fallback:(fun lhs rhs ->
+      Nx.matmul
+        (Nx.cast Nx.float32 lhs)
+        (Nx.cast Nx.float32 rhs))
+
+let result = gemm_kernel lhs rhs
+```
+
+Pointers support typed element offsets and masked loads. Statements support
+masked stores and specialization-time assertions. `Value.range` lowers a typed
+device loop with one loop-carried value; `Dsl.static_range` unrolls a
+construction-time loop.
+
+The pointwise example processes `block_size` contiguous flattened elements per
+program. Its generated TTIR forms
+`program_id * block_size + [0, block_size)`, masks loads and stores against the
+static element count, and launches `ceil_div(numel, block_size)` programs.
+Empty tensors and failed specialization guards use the Raven fallback;
+incompatible tensor dtypes are rejected by the OCaml type checker.
+
+All DSL kernels share one TTIR emitter and specialization cache. CUDA tests
+cover masked tails, general pointer programs, comparisons and selection,
+extended math, integer buffers, mixed f16/f32 casts, block reductions, softmax,
+transpose, scalar and block loop-carried values, and tensor-core dot. A tiled
+32x32 GEMM test combines two-dimensional pointer blocks, a K-loop, f16 loads,
+and f32 accumulation.
+
+Multiple results, atomics, scans and sorting, random numbers, FP8 scaled dot,
+block pointers, tensor descriptors/TMA, cache modifiers, device diagnostics,
+target capability guards, configuration families/autotuning, and a PPX for
+statement-level control flow remain unimplemented. Raw CUDA remains the
+lower-level path for kernels requiring those target-specific facilities.
 
 ## Design position
 
@@ -307,9 +497,11 @@ Control.while_
   ~body:(fun state -> ...)
 ```
 
-This keeps the core library a normal deep embedding. A syntax PPX could later
-translate a friendlier kernel syntax into these combinators, but correctness
-must not depend on a large source-to-source transformation.
+This keeps the core library a normal deep embedding. The implemented
+`fun%rune.kernel` PPX translates operators throughout one kernel builder; a
+later statement-level frontend could translate control flow into these
+combinators, but correctness must not depend on a large source-to-source
+transformation.
 
 ## Core values
 

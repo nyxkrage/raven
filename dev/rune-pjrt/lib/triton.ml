@@ -35,8 +35,8 @@ module Kernel = struct
         (Printf.sprintf "Rune_pjrt.Triton.Kernel.create: %s must be positive"
            name)
 
-  let create ~name ~ir ?(num_warps = 4) ?(num_stages = 3)
-      ?(grid = (1, 1, 1)) () =
+  let create ~name ~ir ?(num_warps = 4) ?(num_stages = 3) ?(grid = (1, 1, 1)) ()
+      =
     if String.trim name = "" then
       invalid_arg "Rune_pjrt.Triton.Kernel.create: name must not be empty";
     if String.trim ir = "" then
@@ -50,8 +50,7 @@ module Kernel = struct
     positive "grid x" grid_x;
     positive "grid y" grid_y;
     positive "grid z" grid_z;
-    Internal.
-      { name; ir; num_warps; num_stages; grid_x; grid_y; grid_z }
+    Internal.{ name; ir; num_warps; num_stages; grid_x; grid_y; grid_z }
 end
 
 let call kernel ~inputs ~fallback =
@@ -62,3 +61,15 @@ let call kernel ~inputs ~fallback =
   match decision with
   | Internal.Use_kernel output -> output
   | Internal.Use_fallback -> fallback ()
+
+module Dsl = Triton_dsl.Make (struct
+  type nonrec packed = packed
+  type raw_kernel = Kernel.t
+
+  let raw_kernel ~name ~ir ~num_warps ~num_stages ~grid =
+    Kernel.create ~name ~ir ~num_warps ~num_stages ~grid ()
+
+  let raw_call = call
+  let pack_tensor tensor = Tensor tensor
+  let packed_shape (Tensor tensor) = Nx.shape tensor
+end)
