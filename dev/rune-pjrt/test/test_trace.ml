@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 let failf fmt = Printf.ksprintf failwith fmt
-
 let require msg condition = if not condition then failf "test_trace: %s" msg
 
 let contains_substring text substring =
@@ -20,9 +19,7 @@ let contains_substring text substring =
 let test_basic_trace () =
   let x = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   let capture =
-    Rune_pjrt.Trace.capture_one
-      (fun t -> Nx.add (Nx.mul t t) (Nx.sin t))
-      x
+    Rune_pjrt.Trace.capture_one (fun t -> Nx.add (Nx.mul t t) (Nx.sin t)) x
   in
   let program = capture.program in
   require "single input" (List.length program.inputs = 1);
@@ -43,7 +40,9 @@ let test_constant_capture () =
   let constant_nodes =
     List.filter
       (fun node ->
-        match node.Rune_pjrt.Ir.op with Rune_pjrt.Ir.Constant _ -> true | _ -> false)
+        match node.Rune_pjrt.Ir.op with
+        | Rune_pjrt.Ir.Constant _ -> true
+        | _ -> false)
       capture.program.nodes
   in
   require "closed tensor constant captured" (constant_nodes <> [])
@@ -82,9 +81,7 @@ let test_float16_non_finite_literal_lowering () =
   let x = Nx.ones Nx.float16 [| 3 |] in
   let negative_infinity = Nx.scalar Nx.float16 (-1.0e9) in
   let capture =
-    Rune_pjrt.Trace.capture_one
-      (fun input -> Nx.add input negative_infinity)
-      x
+    Rune_pjrt.Trace.capture_one (fun input -> Nx.add input negative_infinity) x
   in
   let module_text = Rune_pjrt.Stablehlo.of_program capture.program in
   require "float16 negative infinity uses its bit-pattern literal"

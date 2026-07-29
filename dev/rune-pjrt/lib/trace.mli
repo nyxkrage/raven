@@ -1,9 +1,6 @@
 type packed = Tensor : ('a, 'b) Nx.t -> packed
 
-type capture = {
-  program : Ir.program;
-  outputs : packed list;
-}
+type capture = { program : Ir.program; outputs : packed list }
 (** A captured program and output shape/dtype witnesses. The tensor contents in
     [outputs] are unspecified; a captured function must not inspect tensor data
     or branch on it while tracing. *)

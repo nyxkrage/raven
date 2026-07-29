@@ -43,8 +43,8 @@ let expected group_values =
           for offset = 0 to inner - 1 do
             sum :=
               !sum
-              +. (lhs.((row * inner) + offset)
-                 *. rhs.((((group * inner) + offset) * columns) + column))
+              +. lhs.((row * inner) + offset)
+                 *. rhs.((((group * inner) + offset) * columns) + column)
           done;
           output.((row * columns) + column) <- !sum
         done
@@ -59,8 +59,7 @@ let max_abs_error expected actual =
   let error = ref 0.0 in
   Array.iteri
     (fun index value ->
-      error :=
-        Float.max !error (Float.abs (value -. actual.(index))))
+      error := Float.max !error (Float.abs (value -. actual.(index))))
     expected;
   !error
 
@@ -70,9 +69,7 @@ let require_close name expected actual =
     failwith (Printf.sprintf "test_grouped_gemm: %s max error is %g" name error)
 
 let test_reference () =
-  let actual =
-    Rune_pjrt.Grouped_gemm.reference ~lhs ~rhs ~group_sizes
-  in
+  let actual = Rune_pjrt.Grouped_gemm.reference ~lhs ~rhs ~group_sizes in
   require_close "reference" (expected group_values) actual
 
 let test_eager_fallback () =
@@ -112,8 +109,7 @@ let test_gradients () =
     Rune.grads
       (function
         | [ lhs; rhs ] ->
-            Rune_pjrt.Grouped_gemm.run kernel ~lhs ~rhs ~group_sizes
-            |> Nx.sum
+            Rune_pjrt.Grouped_gemm.run kernel ~lhs ~rhs ~group_sizes |> Nx.sum
         | _ -> failwith "test_grouped_gemm: expected two differentiable inputs")
       [ lhs; rhs ]
   in
@@ -135,8 +131,7 @@ let cpu_runner =
         let sizes : Nx.int32_t = Obj.magic sizes in
         [
           Rune_pjrt.Tensor
-            (Rune_pjrt.Grouped_gemm.run kernel ~lhs ~rhs
-               ~group_sizes:sizes);
+            (Rune_pjrt.Grouped_gemm.run kernel ~lhs ~rhs ~group_sizes:sizes);
         ]
     | _ -> failwith "test_grouped_gemm: expected three inputs")
 
@@ -160,12 +155,8 @@ let test_pjrt_cpu () =
     check "PJRT CPU rebalanced" alternate_group_values)
 
 let test_invalid_sizes () =
-  let invalid =
-    Nx.create Nx.int32 [| groups |] [| 2l; 0l; 17l; 3l |]
-  in
-  match
-    Rune_pjrt.Grouped_gemm.reference ~lhs ~rhs ~group_sizes:invalid
-  with
+  let invalid = Nx.create Nx.int32 [| groups |] [| 2l; 0l; 17l; 3l |] in
+  match Rune_pjrt.Grouped_gemm.reference ~lhs ~rhs ~group_sizes:invalid with
   | _ -> failwith "test_grouped_gemm: invalid group sizes were accepted"
   | exception Invalid_argument _ -> ()
 

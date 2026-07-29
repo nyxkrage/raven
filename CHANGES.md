@@ -69,6 +69,11 @@ thread.
 
 ### Rune
 
+- Make `rune-pjrt` test dependencies acyclic so fresh `opam install
+  --with-test` environments can resolve Rune, Kaun, and PJRT together.
+- Find CUDA PJRT plugins in installed JAX packages or fetch and verify the
+  official `jax-cuda*-pjrt` wheel when no plugin is provided. Release builds
+  now include the PJRT headers and discover system CUDA toolkits directly.
 - Reduce PJRT JIT capture time for large matrix multiplications by tracing their
   inferred shape instead of evaluating the operation eagerly on the CPU.
 - Fix PJRT StableHLO lowering for float16 reciprocal and non-finite constants,

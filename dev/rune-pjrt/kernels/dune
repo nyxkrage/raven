@@ -1,35 +1,35 @@
 (rule
  (target causal_scaled_softmax.so)
- (enabled_if (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
- (deps
-  causal_scaled_softmax.cu
-  (source_tree ../../../vendor/xla/xla/ffi/api))
+ (enabled_if
+  (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
+ (deps causal_scaled_softmax.cu ../vendor/xla/xla/ffi/api/c_api.h)
  (action
-  (run nvcc
+  (run
+   nvcc
    -std=c++17
    -O3
    -shared
    -Xcompiler=-fPIC
-   -I%{workspace_root}/vendor/xla
+   -I%{workspace_root}/dev/rune-pjrt/vendor/xla
    %{dep:causal_scaled_softmax.cu}
    -o
    %{target})))
 
 (rule
  (target grouped_gemm.so)
- (enabled_if (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
- (deps
-  grouped_gemm.cu
-  (source_tree ../../../vendor/xla/xla/ffi/api))
+ (enabled_if
+  (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
+ (deps grouped_gemm.cu ../vendor/xla/xla/ffi/api/c_api.h)
  (action
-  (run nvcc
+  (run
+   nvcc
    -std=c++17
    -O3
    -gencode=arch=compute_86,code=sm_86
    -gencode=arch=compute_80,code=compute_80
    -shared
    -Xcompiler=-fPIC
-   -I%{workspace_root}/vendor/xla
+   -I%{workspace_root}/dev/rune-pjrt/vendor/xla
    %{dep:grouped_gemm.cu}
    -o
    %{target})))

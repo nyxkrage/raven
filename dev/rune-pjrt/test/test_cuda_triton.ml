@@ -611,4 +611,6 @@ let () =
        %!"
       actual error f16_error math_error extended_error abs_error reduce_error
       dot_error softmax_error transpose_error cast_error loop_error tiled_error)
+  else if Sys.getenv_opt "RUNE_PJRT_TEST_REQUIRE_CUDA" <> None then
+    failwith ("test_cuda_triton: " ^ Rune_pjrt.status ())
   else Printf.printf "test_cuda_triton: CUDA plugin unavailable, skipping\n%!"

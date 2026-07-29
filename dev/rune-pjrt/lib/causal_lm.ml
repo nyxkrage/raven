@@ -4,14 +4,11 @@
   ---------------------------------------------------------------------------*)
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
-
 let desc shape dtype = Ir.{ shape; dtype }
-
 let desc_of_tensor (type a b) (t : (a, b) Nx.t) = Ir.desc_of_tensor t
 
 let reduced_shape shape axis =
-  shape
-  |> Array.to_list
+  shape |> Array.to_list
   |> List.mapi (fun i dim -> (i, dim))
   |> List.filter_map (fun (i, dim) -> if i = axis then None else Some dim)
   |> Array.of_list
@@ -34,8 +31,7 @@ let reduce_max_init_literal dtype =
 
 let argmax_lines ~indent ~base ~input ~input_desc ~axis =
   if axis < 0 || axis >= Array.length input_desc.Ir.shape then
-    invalid_argf "Rune_pjrt.Causal_lm.greedy_decode: axis %d out of bounds"
-      axis;
+    invalid_argf "Rune_pjrt.Causal_lm.greedy_decode: axis %d out of bounds" axis;
   let input_ty = Stablehlo.tensor_type input_desc in
   let index_desc = { input_desc with dtype = "int32" } in
   let index_ty = Stablehlo.tensor_type index_desc in
@@ -60,14 +56,14 @@ let argmax_lines ~indent ~base ~input ~input_desc ~axis =
     Printf.sprintf "%s%%%s_init_index = stablehlo.constant dense<0> : %s" indent
       base index_scalar_ty;
     Printf.sprintf
-      "%s%%%s_pair:2 = stablehlo.reduce(%s init: %%%s_init_value), \
-       (%%%s_iota init: %%%s_init_index) across dimensions = [%d] : (%s, %s, \
-       %s, %s) -> (%s, %s)"
+      "%s%%%s_pair:2 = stablehlo.reduce(%s init: %%%s_init_value), (%%%s_iota \
+       init: %%%s_init_index) across dimensions = [%d] : (%s, %s, %s, %s) -> \
+       (%s, %s)"
       indent base input base base base axis input_ty index_ty input_scalar_ty
       index_scalar_ty reduced_value_ty output_ty;
     Printf.sprintf
-      "%s  reducer(%%%s_lhs_value: %s, %%%s_rhs_value: %s) \
-       (%%%s_lhs_index: %s, %%%s_rhs_index: %s) {"
+      "%s  reducer(%%%s_lhs_value: %s, %%%s_rhs_value: %s) (%%%s_lhs_index: \
+       %s, %%%s_rhs_index: %s) {"
       indent base input_scalar_ty base input_scalar_ty base index_scalar_ty base
       index_scalar_ty;
     Printf.sprintf
@@ -95,8 +91,8 @@ let argmax_lines ~indent ~base ~input ~input_desc ~axis =
        %%%s_lhs_index : tensor<i1>, %s"
       indent base base base base index_scalar_ty;
     Printf.sprintf
-      "%s    %%%s_index = stablehlo.select %%%s_eq, %%%s_idx_eq, \
-       %%%s_idx_gt : tensor<i1>, %s"
+      "%s    %%%s_index = stablehlo.select %%%s_eq, %%%s_idx_eq, %%%s_idx_gt : \
+       tensor<i1>, %s"
       indent base base base base index_scalar_ty;
     Printf.sprintf "%s    stablehlo.return %%%s_value, %%%s_index : %s, %s"
       indent base base input_scalar_ty index_scalar_ty;
@@ -114,21 +110,21 @@ let validate_input_ids (type a) (input_ids : (int32, a) Nx.t) =
   let shape = Nx.shape input_ids in
   if Array.length shape <> 2 then
     invalid_argf
-      "Rune_pjrt.Causal_lm.greedy_decode: expected rank-2 input ids, got rank %d"
+      "Rune_pjrt.Causal_lm.greedy_decode: expected rank-2 input ids, got rank \
+       %d"
       (Array.length shape);
   let batch = shape.(0) in
   let prompt_len = shape.(1) in
   if batch <= 0 then
-    invalid_arg
-      "Rune_pjrt.Causal_lm.greedy_decode: batch size must be positive";
+    invalid_arg "Rune_pjrt.Causal_lm.greedy_decode: batch size must be positive";
   if prompt_len <= 0 then
     invalid_arg
       "Rune_pjrt.Causal_lm.greedy_decode: prompt length must be positive";
   (batch, prompt_len)
 
 let compile ~backend ~device_id ~max_tokens
-    (forward : (int32, 'a) Nx.t -> ('b, 'c) Nx.t)
-    (input_ids : (int32, 'a) Nx.t) =
+    (forward : (int32, 'a) Nx.t -> ('b, 'c) Nx.t) (input_ids : (int32, 'a) Nx.t)
+    =
   if device_id < 0 then
     invalid_arg "Rune_pjrt.Causal_lm.greedy_decode: device_id must be >= 0";
   if max_tokens < 0 then
@@ -146,14 +142,11 @@ let compile ~backend ~device_id ~max_tokens
     Error.raise
       (Error.Unsupported_program
          "causal_lm.greedy_decode expected a single token input");
-  let program, lifted_constants =
-    Ir.parameterize_constants capture.program
-  in
+  let program, lifted_constants = Ir.parameterize_constants capture.program in
   let lowered =
     Stablehlo.lower_program ~indent:"      "
       ~arg_name:(fun index ->
-        if index = 0 then "%iterTokens"
-        else Printf.sprintf "%%arg%d" index)
+        if index = 0 then "%iterTokens" else Printf.sprintf "%%arg%d" index)
       program
   in
   let logits_ref, logits_desc =
@@ -174,8 +167,10 @@ let compile ~backend ~device_id ~max_tokens
     Error.raise
       (Error.Unsupported_program
          (Printf.sprintf
-            "causal_lm.greedy_decode expected logits shape [%d;%d;vocab], got %s"
-            batch max_seq (Nx_core.Shape.to_string logits_desc.shape)));
+            "causal_lm.greedy_decode expected logits shape [%d;%d;vocab], got \
+             %s"
+            batch max_seq
+            (Nx_core.Shape.to_string logits_desc.shape)));
   let vocab = logits_desc.shape.(2) in
   let signature = Signature.of_tensors ~backend ~device_id [ input_ids ] in
   let extra_inputs =
@@ -205,11 +200,11 @@ let compile ~backend ~device_id ~max_tokens
     ("%arg0: " ^ prompt_ty)
     :: (Ir.parameters program
        |> List.filter_map (fun (index, _, desc) ->
-              if index = 0 then None
-              else
-                Some
-                  (Printf.sprintf "%%arg%d: %s" index
-                     (Stablehlo.tensor_type desc))))
+           if index = 0 then None
+           else
+             Some
+               (Printf.sprintf "%%arg%d: %s" index (Stablehlo.tensor_type desc)))
+       )
     |> String.concat ", "
   in
   let tokens_init_lines =
@@ -249,8 +244,8 @@ let compile ~backend ~device_id ~max_tokens
           scalar_i32_ty scalar_i32_ty tokens_ty;
         "    cond {";
         Printf.sprintf
-          "      %%keep_going = stablehlo.compare  LT, %%iterCount, %%max_steps \
-           : (%s, %s) -> tensor<i1>"
+          "      %%keep_going = stablehlo.compare  LT, %%iterCount, \
+           %%max_steps : (%s, %s) -> tensor<i1>"
           scalar_i32_ty scalar_i32_ty;
         "      stablehlo.return %keep_going : tensor<i1>";
         "    } do {";
@@ -259,8 +254,8 @@ let compile ~backend ~device_id ~max_tokens
     @ [
         Printf.sprintf
           "      %%logits_row = \"stablehlo.dynamic_slice\"(%s, %%zero_i32, \
-           %%iterPos, %%zero_i32) {slice_sizes = array<i64: %d, 1, %d>} : \
-           (%s, %s, %s, %s) -> %s"
+           %%iterPos, %%zero_i32) {slice_sizes = array<i64: %d, 1, %d>} : (%s, \
+           %s, %s, %s) -> %s"
           logits_ref batch vocab logits_ty scalar_i32_ty scalar_i32_ty
           scalar_i32_ty logits_row_ty;
         Printf.sprintf
@@ -277,15 +272,16 @@ let compile ~backend ~device_id ~max_tokens
           "      %%next_pos = stablehlo.add %%iterPos, %%one_i32 : %s"
           scalar_i32_ty;
         Printf.sprintf
-          "      %%next_tokens = \"stablehlo.dynamic_update_slice\"(%%iterTokens, \
-           %%next_patch, %%zero_i32, %%next_pos) : (%s, %s, %s, %s) -> %s"
+          "      %%next_tokens = \
+           \"stablehlo.dynamic_update_slice\"(%%iterTokens, %%next_patch, \
+           %%zero_i32, %%next_pos) : (%s, %s, %s, %s) -> %s"
           tokens_ty next_patch_ty scalar_i32_ty scalar_i32_ty tokens_ty;
         Printf.sprintf
           "      %%next_count = stablehlo.add %%iterCount, %%one_i32 : %s"
           scalar_i32_ty;
         Printf.sprintf
-          "      stablehlo.return %%next_count, %%next_pos, %%next_tokens : %s, \
-           %s, %s"
+          "      stablehlo.return %%next_count, %%next_pos, %%next_tokens : \
+           %s, %s, %s"
           scalar_i32_ty scalar_i32_ty tokens_ty;
         "    }";
         Printf.sprintf "  func.return %%loop#2 : %s" tokens_ty;
@@ -293,8 +289,10 @@ let compile ~backend ~device_id ~max_tokens
   in
   let module_text =
     String.concat "\n"
-      ([ "module {";
-         Printf.sprintf "func.func @main(%s) -> %s {" params tokens_ty ]
+      ([
+         "module {";
+         Printf.sprintf "func.func @main(%s) -> %s {" params tokens_ty;
+       ]
       @ body_lines @ [ "}"; "}" ])
   in
   Runtime.compile_stablehlo ~backend ~device_id ~signature ~module_text
@@ -310,7 +308,9 @@ let greedy_decode ?(backend = `Cuda) ?(device_id = 0) ~max_tokens
       match Hashtbl.find_opt cache key with
       | Some compiled -> compiled
       | None ->
-          let compiled = compile ~backend ~device_id ~max_tokens forward input_ids in
+          let compiled =
+            compile ~backend ~device_id ~max_tokens forward input_ids
+          in
           Hashtbl.replace cache key compiled;
           compiled
     in

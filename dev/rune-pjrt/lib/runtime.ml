@@ -105,6 +105,8 @@ let artifact_dir key =
 let plugin_dir = Filename.concat "_build/default/dev/rune-pjrt" "plugins"
 let bazel_root = Filename.concat "_build/default/dev/rune-pjrt" "bazel"
 let plugin_path_env = "RUNE_PJRT_PLUGIN_PATH"
+let plugin_fetcher_env = "RUNE_PJRT_FETCHER"
+let plugin_auto_fetch_env = "RUNE_PJRT_AUTO_FETCH"
 let plugin_search_max_depth = 6
 
 let plugin_name : Backend.t -> string = function
@@ -201,7 +203,7 @@ let env_plugin_path backend =
             find_plugin_under backend ~depth:plugin_search_max_depth entry
           else None)
 
-let resolved_plugin_path backend =
+let resolved_existing_plugin_path backend =
   match env_plugin_path backend with
   | Some path -> Some path
   | None -> (
@@ -218,6 +220,140 @@ let resolved_plugin_path backend =
           | None ->
               let copied = Filename.concat plugin_dir (plugin_name backend) in
               existing_file copied))
+
+let env_truthy name ~default =
+  match Sys.getenv_opt name with
+  | None -> default
+  | Some value -> (
+      match String.lowercase_ascii (String.trim value) with
+      | "" | "0" | "false" | "no" | "off" -> false
+      | _ -> true)
+
+let executable_file path =
+  try
+    Unix.access path [ Unix.X_OK ];
+    not (is_directory path)
+  with Unix.Unix_error _ -> false
+
+let command_in_path command =
+  if Filename.is_implicit command then
+    match Sys.getenv_opt "PATH" with
+    | None -> None
+    | Some path ->
+        path |> String.split_on_char ':'
+        |> List.find_map (fun directory ->
+            let directory = if directory = "" then "." else directory in
+            let candidate = Filename.concat directory command in
+            if executable_file candidate then existing_file candidate else None)
+  else if executable_file command then existing_file command
+  else None
+
+let python_command () =
+  match Sys.getenv_opt "RUNE_PJRT_PYTHON" with
+  | Some command when String.trim command <> "" -> command_in_path command
+  | _ -> (
+      match command_in_path "python3" with
+      | Some _ as command -> command
+      | None -> command_in_path "python")
+
+let fetcher_command () =
+  let configured =
+    match Sys.getenv_opt plugin_fetcher_env with
+    | Some path ->
+        let path = String.trim path in
+        if path = "" then None else Some path
+    | None -> None
+  in
+  match configured with
+  | Some path ->
+      let path = expand_home path in
+      if Filename.check_suffix path ".py" then
+        Option.map
+          (fun python -> (python, [| python; path |]))
+          (python_command ())
+      else
+        Option.map
+          (fun executable -> (executable, [| executable |]))
+          (command_in_path path)
+  | None -> (
+      match command_in_path "rune-pjrt-fetch-plugin" with
+      | Some executable -> Some (executable, [| executable |])
+      | None ->
+          let source = "dev/rune-pjrt/scripts/fetch_jax_plugin.py" in
+          if Sys.file_exists source then
+            Option.map
+              (fun python -> (python, [| python; source |]))
+              (python_command ())
+          else None)
+
+let read_process_output input =
+  let rec loop last =
+    match input_line input with
+    | line ->
+        let line = String.trim line in
+        loop (if line = "" then last else Some line)
+    | exception End_of_file -> last
+  in
+  loop None
+
+type plugin_fetch = Not_attempted | Fetched of string | Fetch_failed of string
+
+let jax_plugin_fetch = ref Not_attempted
+
+let fetch_jax_cuda_plugin () =
+  match !jax_plugin_fetch with
+  | Fetched path -> existing_file path
+  | Fetch_failed _ -> None
+  | Not_attempted -> (
+      let result =
+        if not (env_truthy plugin_auto_fetch_env ~default:true) then
+          Error
+            (Printf.sprintf "%s disables the JAX PJRT wheel fallback"
+               plugin_auto_fetch_env)
+        else
+          match fetcher_command () with
+          | None ->
+              Error
+                (Printf.sprintf
+                   "could not find rune-pjrt-fetch-plugin; set %s to its path"
+                   plugin_fetcher_env)
+          | Some (program, prefix) -> (
+              let input = Unix.open_process_args_in program prefix in
+              let output = read_process_output input in
+              let status = Unix.close_process_in input in
+              match (status, output) with
+              | Unix.WEXITED 0, Some path -> (
+                  match existing_file path with
+                  | Some path -> Ok path
+                  | None ->
+                      Error
+                        ("JAX PJRT fetcher returned a missing plugin: " ^ path))
+              | Unix.WEXITED code, _ ->
+                  Error
+                    (Printf.sprintf "JAX PJRT fetcher exited with status %d"
+                       code)
+              | Unix.WSIGNALED signal, _ ->
+                  Error
+                    (Printf.sprintf "JAX PJRT fetcher was killed by signal %d"
+                       signal)
+              | Unix.WSTOPPED signal, _ ->
+                  Error
+                    (Printf.sprintf "JAX PJRT fetcher stopped on signal %d"
+                       signal))
+      in
+      match result with
+      | Ok path ->
+          jax_plugin_fetch := Fetched path;
+          Some path
+      | Error message ->
+          jax_plugin_fetch := Fetch_failed message;
+          None)
+
+let resolved_plugin_path backend =
+  match resolved_existing_plugin_path backend with
+  | Some _ as path -> path
+  | None -> (
+      match backend with `Cuda -> fetch_jax_cuda_plugin () | `Cpu -> None)
 
 let plugin_path backend =
   match resolved_plugin_path backend with
@@ -255,6 +391,10 @@ let cuda_root_from_plugin_path path =
 
 let find_cuda_data_dir () =
   let cuda_root_suffix = [ "external"; "cuda_nvcc" ] in
+  let direct_root root =
+    let libdevice = Filename.concat root "nvvm/libdevice/libdevice.10.bc" in
+    if Sys.file_exists libdevice then Some root else None
+  in
   let candidate_root root =
     let cuda_root = List.fold_left Filename.concat root cuda_root_suffix in
     let libdevice =
@@ -268,20 +408,50 @@ let find_cuda_data_dir () =
     | None ->
         if not (Sys.file_exists root) then None
         else
-          Sys.readdir root
-          |> Array.to_list
+          Sys.readdir root |> Array.to_list
           |> List.map (Filename.concat root)
           |> List.find_map candidate_root
   in
-  match Option.bind (resolved_plugin_path `Cuda) cuda_root_from_plugin_path with
+  let configured =
+    [ Sys.getenv_opt "CUDA_HOME"; Sys.getenv_opt "CUDA_PATH" ]
+    |> List.filter_map Fun.id |> List.find_map direct_root
+  in
+  let from_nvcc =
+    match command_in_path "nvcc" with
+    | Some path -> direct_root (Filename.dirname (Filename.dirname path))
+    | None -> None
+  in
+  let system =
+    match direct_root "/usr/local/cuda" with
+    | Some _ as hit -> hit
+    | None ->
+        if not (Sys.file_exists "/usr/local") then None
+        else
+          sorted_readdir "/usr/local"
+          |> List.filter (has_prefix ~prefix:"cuda-")
+          |> List.rev
+          |> List.find_map (fun entry ->
+              direct_root (Filename.concat "/usr/local" entry))
+  in
+  match
+    Option.bind (resolved_existing_plugin_path `Cuda) cuda_root_from_plugin_path
+  with
   | Some _ as hit -> hit
-  | None ->
-      if not (Sys.file_exists bazel_root) then None
-      else
-        Sys.readdir bazel_root
-        |> Array.to_list
-        |> List.map (Filename.concat bazel_root)
-        |> List.find_map candidate_base
+  | None -> (
+      match configured with
+      | Some _ as hit -> hit
+      | None -> (
+          match from_nvcc with
+          | Some _ as hit -> hit
+          | None -> (
+              match system with
+              | Some _ as hit -> hit
+              | None ->
+                  if not (Sys.file_exists bazel_root) then None
+                  else
+                    Sys.readdir bazel_root |> Array.to_list
+                    |> List.map (Filename.concat bazel_root)
+                    |> List.find_map candidate_base)))
 
 let configure_xla_flags () =
   match find_cuda_data_dir () with
@@ -294,28 +464,28 @@ let configure_xla_flags () =
         |> List.exists (has_prefix ~prefix:"--xla_gpu_cuda_data_dir=")
       in
       if not already_set then
-        let updated =
-          if current = "" then flag else current ^ " " ^ flag
-        in
+        let updated = if current = "" then flag else current ^ " " ^ flag in
         Unix.putenv "XLA_FLAGS" updated
 
 let () = configure_xla_flags ()
-
 let backend_available backend = Option.is_some (resolved_plugin_path backend)
-
 let is_available () = backend_available `Cpu || backend_available `Cuda
 
 let status () =
   if backend_available `Cpu && backend_available `Cuda then
     "PJRT CPU and CUDA plugins available"
   else if backend_available `Cpu then
-    "PJRT CPU plugin available; build CUDA plugin with `bash dev/rune-pjrt/scripts/build_plugin.sh cuda`"
-  else if backend_available `Cuda then
-    "PJRT CUDA plugin available"
-  else if Sys.file_exists "vendor/xla" then
-    "PJRT plugins missing; build one with `bash dev/rune-pjrt/scripts/build_plugin.sh cpu`"
+    "PJRT CPU plugin available; build CUDA plugin with `bash \
+     dev/rune-pjrt/scripts/build_plugin.sh cuda`"
+  else if backend_available `Cuda then "PJRT CUDA plugin available"
   else
-    "vendor/xla not detected; clone XLA under vendor/ and build a PJRT plugin"
+    match !jax_plugin_fetch with
+    | Fetch_failed message -> "PJRT CUDA plugin unavailable: " ^ message
+    | Not_attempted | Fetched _ ->
+        if Sys.file_exists "vendor/xla" then
+          "PJRT plugins missing; build one with `bash \
+           dev/rune-pjrt/scripts/build_plugin.sh cpu`"
+        else "PJRT plugins missing; CUDA can be fetched from a JAX PJRT wheel"
 
 let json_escape s =
   let b = Buffer.create (String.length s + 8) in
@@ -332,87 +502,43 @@ let json_escape s =
 
 let write_file path f =
   let oc = open_out_bin path in
-  Fun.protect
-    (fun () -> f oc)
-    ~finally:(fun () -> close_out oc)
+  Fun.protect (fun () -> f oc) ~finally:(fun () -> close_out oc)
 
 let supported_op = function
-  | Ir.Parameter _
-  | Constant _
+  | Ir.Parameter _ | Constant _
   | Unary { op = Contiguous | Copy; _ }
   | Unary
       {
         op =
-          ( Neg
-          | Sin
-          | Sqrt
-          | Recip
-          | Log
-          | Exp
-          | Cos
-          | Abs
-          | Sign
-          | Tan
-          | Asin
-          | Acos
-          | Atan
-          | Sinh
-          | Cosh
-          | Tanh
-          | Trunc
-          | Ceil
-          | Floor
-          | Round
+          ( Neg | Sin | Sqrt | Recip | Log | Exp | Cos | Abs | Sign | Tan | Asin
+          | Acos | Atan | Sinh | Cosh | Tanh | Trunc | Ceil | Floor | Round
           | Erf );
         _;
       }
   | Binary
       {
         op =
-          ( Add
-          | Sub
-          | Mul
-          | Idiv
-          | Fdiv
-          | Max
-          | Min
-          | Mod
-          | Pow
-          | Xor
-          | Or
-          | And
-          | Atan2
-          | CmpEq
-          | CmpNe
-          | CmpLt
-          | CmpLe );
+          ( Add | Sub | Mul | Idiv | Fdiv | Max | Min | Mod | Pow | Xor | Or
+          | And | Atan2 | CmpEq | CmpNe | CmpLt | CmpLe );
         _;
       }
   | Where _
-  | Reduce { op = (Reduce_sum | Reduce_max); _ }
+  | Reduce { op = Reduce_sum | Reduce_max; _ }
   | Arg_reduce { op = Argmax; _ }
-  | Reshape _
-  | Expand _
-  | Permute _
-  | Shrink _
-  | Flip _
-  | Cat _
-  | Pad _
-  | Cast _
-  | Gather _
-  | Matmul _
-  | Custom_call _
-  | Triton_call _ ->
+  | Reshape _ | Expand _ | Permute _ | Shrink _ | Flip _ | Cat _ | Pad _
+  | Cast _ | Gather _ | Matmul _ | Custom_call _ | Triton_call _ ->
       true
-  | Reduce _ | Arg_reduce _ | Assign _ | Buffer _ | Unsupported _ ->
-      false
+  | Reduce _ | Arg_reduce _ | Assign _ | Buffer _ | Unsupported _ -> false
 
 let validate_program program =
   match Ir.unsupported_ops program with
-  | name :: _ ->
-      Error.raise (Error.Unsupported_op name)
-  | [] ->
-      (match List.find_opt (fun node -> not (supported_op node.Ir.op)) program.Ir.nodes with
+  | name :: _ -> Error.raise (Error.Unsupported_op name)
+  | [] -> (
+      match
+        List.find_opt
+          (fun node -> not (supported_op node.Ir.op))
+          program.Ir.nodes
+      with
       | Some node ->
           Error.raise
             (Error.Unsupported_program
@@ -428,8 +554,8 @@ let write_buffer path (type a b) (dtype : (a, b) Nx_core.Dtype.t)
   Nx_buffer.blit_to_bytes buffer bytes;
   write_file path (fun oc -> output_bytes oc bytes)
 
-let write_literal artifact_dir node_id (Ir.Literal { dtype; buffer; _ } as literal)
-    =
+let write_literal artifact_dir node_id
+    (Ir.Literal { dtype; buffer; _ } as literal) =
   ignore literal;
   let file = Printf.sprintf "const_%d.bin" node_id in
   let path = Filename.concat artifact_dir file in
@@ -444,9 +570,7 @@ let data_string_of_literal (Ir.Literal { dtype; buffer; _ }) =
   Bytes.unsafe_to_string bytes
 
 let packed_output_descs outputs =
-  List.map
-    (fun (Trace.Tensor t) -> Ir.desc_of_tensor t)
-    outputs
+  List.map (fun (Trace.Tensor t) -> Ir.desc_of_tensor t) outputs
 
 let desc_key (desc : Ir.desc) =
   Printf.sprintf "%s:%s" desc.dtype (Nx_core.Shape.to_string desc.shape)
@@ -479,7 +603,8 @@ let write_json_list oc pp_item items =
   output_char oc ']'
 
 let write_json_int_array oc xs =
-  write_json_list oc (fun oc x -> output_string oc (string_of_int x))
+  write_json_list oc
+    (fun oc x -> output_string oc (string_of_int x))
     (Array.to_list xs)
 
 let write_json_bool_array oc xs =
@@ -526,11 +651,11 @@ let write_op_json artifact_dir oc node =
         (json_escape (op_name (Reduce { op; input; axes; keepdims })))
         input;
       write_json_int_array oc axes;
-      Printf.fprintf oc ",\"keepdims\":%s}" (if keepdims then "true" else "false")
+      Printf.fprintf oc ",\"keepdims\":%s}"
+        (if keepdims then "true" else "false")
   | Arg_reduce { op; input; axis; keepdims } ->
       Printf.fprintf oc
-        "{\"tag\":\"arg_reduce\",\"op\":\"%s\",\"input\":%d,\"axis\":%d,\
-         \"keepdims\":%s}"
+        "{\"tag\":\"arg_reduce\",\"op\":\"%s\",\"input\":%d,\"axis\":%d,\"keepdims\":%s}"
         (json_escape (op_name (Arg_reduce { op; input; axis; keepdims })))
         input axis
         (if keepdims then "true" else "false")
@@ -555,9 +680,7 @@ let write_op_json artifact_dir oc node =
       write_json_bool_array oc dims;
       output_char oc '}'
   | Pad { input; padding; fill_value } ->
-      Printf.fprintf oc
-        "{\"tag\":\"pad\",\"input\":%d,\"padding\":"
-        input;
+      Printf.fprintf oc "{\"tag\":\"pad\",\"input\":%d,\"padding\":" input;
       write_json_limits oc padding;
       Printf.fprintf oc ",\"fill_value\":\"%s\"}" (json_escape fill_value)
   | Cat { inputs; axis } ->
@@ -575,16 +698,15 @@ let write_op_json artifact_dir oc node =
       Printf.fprintf oc "{\"tag\":\"matmul\",\"lhs\":%d,\"rhs\":%d}" lhs rhs
   | Custom_call { handler; inputs } ->
       Printf.fprintf oc
-        "{\"tag\":\"custom_call\",\"library\":\"%s\",\"symbol\":\"%s\",\
-         \"target\":\"%s\",\"inputs\":"
-        (json_escape handler.library) (json_escape handler.symbol)
+        "{\"tag\":\"custom_call\",\"library\":\"%s\",\"symbol\":\"%s\",\"target\":\"%s\",\"inputs\":"
+        (json_escape handler.library)
+        (json_escape handler.symbol)
         (json_escape handler.target);
       write_json_list oc (fun oc x -> output_string oc (string_of_int x)) inputs;
       output_char oc '}'
   | Triton_call { kernel; inputs } ->
       Printf.fprintf oc
-        "{\"tag\":\"triton_call\",\"name\":\"%s\",\"ir\":\"%s\",\
-         \"num_warps\":%d,\"num_stages\":%d,\"grid\":[%d,%d,%d],\"inputs\":"
+        "{\"tag\":\"triton_call\",\"name\":\"%s\",\"ir\":\"%s\",\"num_warps\":%d,\"num_stages\":%d,\"grid\":[%d,%d,%d],\"inputs\":"
         (json_escape kernel.name) (json_escape kernel.ir) kernel.num_warps
         kernel.num_stages kernel.grid_x kernel.grid_y kernel.grid_z;
       write_json_list oc (fun oc x -> output_string oc (string_of_int x)) inputs;
@@ -600,7 +722,8 @@ let write_spec artifact_dir spec_path ~backend ~device_id signature program
   write_file spec_path (fun oc ->
       output_string oc "{";
       Printf.fprintf oc "\"backend\":\"%s\",\"device_id\":%d,"
-        (Backend.to_string backend) device_id;
+        (Backend.to_string backend)
+        device_id;
       output_string oc "\"signature\":{\"inputs\":";
       write_json_list oc
         (fun oc (input : Signature.tensor) ->
@@ -611,16 +734,18 @@ let write_spec artifact_dir spec_path ~backend ~device_id signature program
         signature.Signature.inputs;
       output_string oc "},";
       output_string oc "\"program\":{\"inputs\":";
-      write_json_list oc (fun oc id -> output_string oc (string_of_int id))
+      write_json_list oc
+        (fun oc id -> output_string oc (string_of_int id))
         program.Ir.inputs;
       output_string oc ",\"outputs\":";
-      write_json_list oc (fun oc id -> output_string oc (string_of_int id))
+      write_json_list oc
+        (fun oc id -> output_string oc (string_of_int id))
         program.Ir.outputs;
       output_string oc ",\"nodes\":";
       write_json_list oc
         (fun oc (node : Ir.node) ->
-          Printf.fprintf oc "{\"id\":%d,\"dtype\":\"%s\",\"shape\":"
-            node.Ir.id (json_escape node.Ir.desc.dtype);
+          Printf.fprintf oc "{\"id\":%d,\"dtype\":\"%s\",\"shape\":" node.Ir.id
+            (json_escape node.Ir.desc.dtype);
           write_json_int_array oc node.Ir.desc.shape;
           output_string oc ",\"op\":";
           write_op_json artifact_dir oc node;
@@ -689,7 +814,9 @@ let compile_stablehlo ~backend ~device_id ~signature ~module_text ~output_descs
   let artifact_dir = artifact_dir cache_key in
   let spec_path = Filename.concat artifact_dir "program.json" in
   let module_path = Filename.concat artifact_dir "program.mlir" in
-  let program = { Ir.name = Some "custom"; inputs = []; outputs = []; nodes = [] } in
+  let program =
+    { Ir.name = Some "custom"; inputs = []; outputs = []; nodes = [] }
+  in
   write_spec artifact_dir spec_path ~backend ~device_id signature program
     output_descs;
   write_file module_path (fun oc -> output_string oc module_text);
@@ -756,8 +883,7 @@ let ensure_ffi_registered compiled =
                   "FFI library %S changed after tracing; retrace with an \
                    immutable or content-addressed artifact"
                   handler.library));
-        native_register_ffi_handler
-          ~plugin_path:compiled.plugin_path
+        native_register_ffi_handler ~plugin_path:compiled.plugin_path
           ~library_path:identity.library ~library_digest:identity.library_digest
           ~symbol:handler.symbol ~target:handler.target)
       handlers;
@@ -816,12 +942,11 @@ let execute compiled inputs =
          (fun (Trace.Tensor tensor) -> Obj.repr (Nx.data tensor))
          outputs)
   in
-  native_execute
-    ~plugin_path:compiled.plugin_path
-    ~cache_key:compiled.cache_key ~device_id:compiled.device_id
-    ~stablehlo:compiled.module_text ~dynamic_input_dtypes ~dynamic_input_shapes
-    ~dynamic_input_data ~constant_input_dtypes ~constant_input_shapes
-    ~constant_input_data ~output_dtypes ~output_shapes ~output_data;
+  native_execute ~plugin_path:compiled.plugin_path ~cache_key:compiled.cache_key
+    ~device_id:compiled.device_id ~stablehlo:compiled.module_text
+    ~dynamic_input_dtypes ~dynamic_input_shapes ~dynamic_input_data
+    ~constant_input_dtypes ~constant_input_shapes ~constant_input_data
+    ~output_dtypes ~output_shapes ~output_data;
   outputs
 
 let device_buffer_of_host ~backend ~device_id tensor =
@@ -936,8 +1061,7 @@ let execute_device compiled inputs =
   in
   let output_dtypes, output_shapes = output_metadata compiled in
   let native_outputs =
-    native_execute_device
-      ~plugin_path:compiled.plugin_path
+    native_execute_device ~plugin_path:compiled.plugin_path
       ~cache_key:compiled.cache_key ~device_id:compiled.device_id
       ~stablehlo:compiled.module_text ~dynamic_input_buffers
       ~constant_input_dtypes ~constant_input_shapes ~constant_input_data

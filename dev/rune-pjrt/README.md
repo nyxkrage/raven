@@ -9,9 +9,9 @@ published `rune` package.
 ## Scope
 
 - trace `Nx_effect` programs into a compact JIT IR
-- validate the GPT-2 forward-pass subset needed by `packages/kaun/examples/04-gpt2`
+- run dense transformer inference with device-resident KV caches
 - build toward PJRT/XLA execution on CUDA
-- keep vendored third-party source trees in `vendor/`
+- use a provided PJRT plugin, an official JAX PJRT wheel, or a source build
 - keep generated build artifacts in `_build/`
 
 ## Current Status
@@ -20,9 +20,26 @@ The OCaml side traces `Nx_effect` programs into a compact IR, lowers a small
 subset to StableHLO text, and calls PJRT in process through the C API. Host
 buffers can be used with `jit`, while `jit_device` keeps typed buffers resident
 on one PJRT device and lets separately compiled calls feed each other without
-host transfers. There is no Python/JAX execution path in this incubator.
+host transfers. Python is used only by the plugin locator/downloader; JAX is not
+imported and does not participate in tracing, compilation, or execution.
 
-To execute anything, build a vendored PJRT plugin into `_build/` first:
+For CUDA, `rune-pjrt` first looks for an explicitly provided or locally built
+plugin. If none exists, it locates an installed `jax-cuda13-pjrt` or
+`jax-cuda12-pjrt` wheel. As a final fallback it downloads the matching official
+wheel from PyPI, verifies its SHA-256 digest, and extracts only
+`xla_cuda_plugin.so` into the user cache. CUDA 13 is selected for NVIDIA drivers
+580 and newer; CUDA 12 is selected for drivers 525 through 579.
+
+Set `RUNE_PJRT_AUTO_FETCH=0` to disable network fallback. The other controls
+are:
+
+- `RUNE_PJRT_CUDA_VERSION=12|13` to override CUDA detection
+- `RUNE_PJRT_JAX_VERSION` to pin a JAX PJRT wheel version
+- `RUNE_PJRT_PLUGIN_CACHE` to change the extraction cache
+- `RUNE_PJRT_FETCHER` to provide another downloader executable or script
+- `RUNE_PJRT_PYTHON` to select the Python interpreter
+
+To build plugins from a vendored XLA checkout instead, run:
 
 ```bash
 bash dev/rune-pjrt/scripts/build_plugin.sh cpu
@@ -42,7 +59,8 @@ original Bazel output location for its loader `RUNPATH`.
 You can also point the runtime at plugins outside `_build/` with
 `RUNE_PJRT_PLUGIN_PATH`. The value is a colon-separated search path; entries may
 be plugin directories, direct plugin files, `.path` files, or package roots with
-plugins below them.
+plugins below them. Explicit plugins always take precedence over the wheel
+fallback.
 
 See [VENDORING.md](VENDORING.md) for the intended source layout.
 
@@ -71,5 +89,4 @@ transfer. Use `jits_device` for homogeneous multi-input functions and
 ## Examples
 
 User-facing examples that select PJRT through the Rune device API live with the
-`rune` package. The larger end-to-end GPT-2 example still lives in
-`packages/kaun/examples/04-gpt2/pjrt/`.
+`rune` and `hugr` packages.

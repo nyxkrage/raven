@@ -9,6 +9,7 @@ let test_runtime_status () =
     failwith "test_runtime: missing runtime status"
 
 let skip_cuda () = Sys.getenv_opt "RUNE_PJRT_TEST_SKIP_CUDA" <> None
+let require_cuda () = Sys.getenv_opt "RUNE_PJRT_TEST_REQUIRE_CUDA" <> None
 
 let backend_available backend =
   match backend with
@@ -98,8 +99,7 @@ let test_jits_cuda_host_multiple_inputs () =
   let expected = Nx.add lhs rhs in
   for _ = 1 to 3 do
     match compiled [ lhs; rhs ] with
-    | [ actual ] ->
-        check_close "jits_cuda_host_multiple_inputs" expected actual
+    | [ actual ] -> check_close "jits_cuda_host_multiple_inputs" expected actual
     | _ -> failwith "jits_cuda_host_multiple_inputs: wrong output arity"
   done
 
@@ -139,8 +139,7 @@ let test_jits_cuda_device_multiple_buffers () =
   let outputs =
     compiled
       [
-        Rune_pjrt.Device_buffer.of_host lhs;
-        Rune_pjrt.Device_buffer.of_host rhs;
+        Rune_pjrt.Device_buffer.of_host lhs; Rune_pjrt.Device_buffer.of_host rhs;
       ]
   in
   match outputs with
@@ -153,8 +152,7 @@ let test_jits_cuda_device_multiple_buffers () =
 
 let test_jit_cuda_device_shape_cache () =
   let compiled =
-    Rune_pjrt.jit_device (fun input ->
-        Nx.add input (Nx.scalar_like input 2.0))
+    Rune_pjrt.jit_device (fun input -> Nx.add input (Nx.scalar_like input 2.0))
   in
   let check values =
     let input = Nx.create Nx.float32 [| Array.length values |] values in
@@ -178,7 +176,10 @@ let () =
     test_jit_cpu_argmax_executes ();
     test_rune_jit_pjrt_cpu_executes ();
     test_jit_erf_executes `Cpu);
-  if backend_available `Cuda then (
+  let cuda_available = backend_available `Cuda in
+  if require_cuda () && not cuda_available then
+    failwith ("test_runtime: " ^ Rune_pjrt.Runtime.status ());
+  if cuda_available then (
     test_jit_cuda_executes ();
     test_jits_cuda_host_multiple_inputs ();
     test_jit_cuda_device_executes ();

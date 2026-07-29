@@ -14,5 +14,7 @@
 
 (rule
  (targets c_flags.sexp c_library_flags.sexp)
+ (deps
+  (source_tree ../vendor))
  (action
   (run config/discover.exe)))

@@ -6,17 +6,15 @@
 open Nx_core
 
 type node_id = int
+type desc = { shape : int array; dtype : string }
 
-type desc = {
-  shape : int array;
-  dtype : string;
-}
-
-type literal = Literal : {
-  dtype : ('a, 'b) Dtype.t;
-  shape : int array;
-  buffer : ('a, 'b) Nx_buffer.t;
-} -> literal
+type literal =
+  | Literal : {
+      dtype : ('a, 'b) Dtype.t;
+      shape : int array;
+      buffer : ('a, 'b) Nx_buffer.t;
+    }
+      -> literal
 
 type unary =
   | Neg
@@ -106,11 +104,7 @@ type op =
   | Permute of { input : node_id; axes : int array }
   | Shrink of { input : node_id; limits : (int * int) array }
   | Flip of { input : node_id; dims : bool array }
-  | Pad of {
-      input : node_id;
-      padding : (int * int) array;
-      fill_value : string;
-    }
+  | Pad of { input : node_id; padding : (int * int) array; fill_value : string }
   | Cat of { inputs : node_id list; axis : int }
   | Cast of { input : node_id; dtype : string }
   | Gather of { data : node_id; indices : node_id; axis : int }
@@ -120,11 +114,7 @@ type op =
   | Assign of { dst : node_id; src : node_id }
   | Unsupported of string
 
-type node = {
-  id : node_id;
-  desc : desc;
-  op : op;
-}
+type node = { id : node_id; desc : desc; op : op }
 
 type program = {
   name : string option;
@@ -145,7 +135,9 @@ let desc_of_tensor (type a b) (t : (a, b) Nx.t) =
 
 let literal_of_tensor (type a b) (t : (a, b) Nx.t) =
   let buffer =
-    let t = if Nx.is_c_contiguous t && Nx.offset t = 0 then t else Nx.contiguous t in
+    let t =
+      if Nx.is_c_contiguous t && Nx.offset t = 0 then t else Nx.contiguous t
+    in
     let buffer = Nx.data t in
     if Nx_buffer.length buffer = Nx.numel t then buffer else Nx.data (Nx.copy t)
   in
@@ -255,9 +247,9 @@ let op_name = function
 let parameters (program : program) =
   program.nodes
   |> List.filter_map (fun (node : node) ->
-         match node.op with
-         | Parameter index -> Some (index, node.id, node.desc)
-         | _ -> None)
+      match node.op with
+      | Parameter index -> Some (index, node.id, node.desc)
+      | _ -> None)
   |> List.sort (fun (a, _, _) (b, _, _) -> Int.compare a b)
 
 let parameterize_constants ?(min_bytes = 4096) (program : program) =
@@ -300,7 +292,9 @@ let prune program =
   in
   let reachable = List.fold_left visit Int_set.empty program.outputs in
   let nodes =
-    List.filter (fun (node : node) -> Int_set.mem node.id reachable) program.nodes
+    List.filter
+      (fun (node : node) -> Int_set.mem node.id reachable)
+      program.nodes
     |> List.sort (fun (a : node) (b : node) -> Int.compare a.id b.id)
   in
   { program with nodes }
@@ -308,11 +302,11 @@ let prune program =
 let unsupported_ops (program : program) =
   program.nodes
   |> List.filter_map (fun (node : node) ->
-         match node.op with
-         | Unsupported name -> Some name
-         | Assign _ -> Some "assign"
-         | Buffer _ -> Some "buffer"
-         | _ -> None)
+      match node.op with
+      | Unsupported name -> Some name
+      | Assign _ -> Some "assign"
+      | Buffer _ -> Some "buffer"
+      | _ -> None)
   |> List.sort_uniq String.compare
 
 let ffi_handlers (program : program) =
@@ -320,8 +314,7 @@ let ffi_handlers (program : program) =
   List.filter_map
     (fun (node : node) ->
       match node.op with
-      | Custom_call { handler; _ }
-        when not (Hashtbl.mem seen handler.target) ->
+      | Custom_call { handler; _ } when not (Hashtbl.mem seen handler.target) ->
           Hashtbl.add seen handler.target ();
           Some handler
       | _ -> None)
@@ -337,9 +330,7 @@ let pp_literal ppf (Literal { dtype; shape; buffer }) =
 let pp_node ppf (node : node) =
   let desc = node.desc in
   let pp_inputs ids =
-    ids
-    |> List.map (fun id -> Printf.sprintf "%%%d" id)
-    |> String.concat ", "
+    ids |> List.map (fun id -> Printf.sprintf "%%%d" id) |> String.concat ", "
   in
   let pp_fill_value ppf fill = Format.pp_print_string ppf fill in
   Format.fprintf ppf "%%%d : %s%s = " node.id desc.dtype
@@ -347,9 +338,9 @@ let pp_node ppf (node : node) =
   match node.op with
   | Parameter index -> Format.fprintf ppf "parameter[%d]" index
   | Constant literal -> pp_literal ppf literal
-  | Buffer { size_in_elements } -> Format.fprintf ppf "buffer[%d]" size_in_elements
-  | Unary { op; input } ->
-      Format.fprintf ppf "%s(%%%d)" (unary_name op) input
+  | Buffer { size_in_elements } ->
+      Format.fprintf ppf "buffer[%d]" size_in_elements
+  | Unary { op; input } -> Format.fprintf ppf "%s(%%%d)" (unary_name op) input
   | Binary { op; lhs; rhs } ->
       Format.fprintf ppf "%s(%%%d, %%%d)" (binary_name op) lhs rhs
   | Where { condition; if_true; if_false } ->
@@ -375,9 +366,7 @@ let pp_node ppf (node : node) =
       Format.fprintf ppf "shrink(%%%d, %s)" input items
   | Flip { input; dims } ->
       let dims =
-        Array.to_list dims
-        |> List.map string_of_bool
-        |> String.concat ", "
+        Array.to_list dims |> List.map string_of_bool |> String.concat ", "
       in
       Format.fprintf ppf "flip(%%%d, dims=[%s])" input dims
   | Pad { input; padding; fill_value } ->
@@ -390,8 +379,7 @@ let pp_node ppf (node : node) =
         fill_value
   | Cat { inputs; axis } ->
       Format.fprintf ppf "cat([%s], axis=%d)" (pp_inputs inputs) axis
-  | Cast { input; dtype } ->
-      Format.fprintf ppf "cast(%%%d -> %s)" input dtype
+  | Cast { input; dtype } -> Format.fprintf ppf "cast(%%%d -> %s)" input dtype
   | Gather { data; indices; axis } ->
       Format.fprintf ppf "gather(%%%d, %%%d, axis=%d)" data indices axis
   | Matmul { lhs; rhs } -> Format.fprintf ppf "matmul(%%%d, %%%d)" lhs rhs
@@ -409,9 +397,11 @@ let pp_program ppf program =
   | None -> Format.fprintf ppf "program"
   | Some name -> Format.fprintf ppf "program %s" name);
   Format.fprintf ppf "@,inputs: %s"
-    (String.concat ", " (List.map (fun id -> Printf.sprintf "%%%d" id) program.inputs));
+    (String.concat ", "
+       (List.map (fun id -> Printf.sprintf "%%%d" id) program.inputs));
   Format.fprintf ppf "@,outputs: %s"
-    (String.concat ", " (List.map (fun id -> Printf.sprintf "%%%d" id) program.outputs));
+    (String.concat ", "
+       (List.map (fun id -> Printf.sprintf "%%%d" id) program.outputs));
   List.iter (fun node -> Format.fprintf ppf "@,%a" pp_node node) program.nodes;
   Format.fprintf ppf "@]"
 

@@ -6,7 +6,56 @@
 let layer_norm x =
   let gamma = Nx.ones Nx.float32 [| 8 |] in
   let beta = Nx.zeros Nx.float32 [| 8 |] in
-  Kaun.Fn.layer_norm ~gamma ~beta x
+  let mean = Nx.mean x ~axes:[ -1 ] ~keepdims:true in
+  let centered = Nx.sub x mean in
+  let variance =
+    Nx.mean (Nx.mul centered centered) ~axes:[ -1 ] ~keepdims:true
+  in
+  let normalized =
+    Nx.mul centered (Nx.rsqrt (Nx.add variance (Nx.scalar_like variance 1e-5)))
+  in
+  Nx.add (Nx.mul normalized gamma) beta
+
+let embedding weights indices =
+  let indices_shape = Nx.shape indices in
+  let flattened = Nx.reshape [| Nx.numel indices |] indices in
+  let gathered = Nx.take ~axis:0 flattened weights in
+  Nx.reshape (Array.append indices_shape [| (Nx.shape weights).(1) |]) gathered
+
+let transpose_last_two tensor =
+  let rank = Nx.ndim tensor in
+  let axes = Array.init rank Fun.id in
+  let previous = axes.(rank - 2) in
+  axes.(rank - 2) <- axes.(rank - 1);
+  axes.(rank - 1) <- previous;
+  Nx.transpose tensor ~axes:(Array.to_list axes)
+
+let causal_attention q k v =
+  let depth = (Nx.shape q).(Nx.ndim q - 1) in
+  let scores =
+    Nx.matmul q (transpose_last_two k)
+    |> Nx.mul (Nx.scalar Nx.float32 (1.0 /. Stdlib.sqrt (float_of_int depth)))
+  in
+  let shape = Nx.shape scores in
+  let sequence_length = shape.(Array.length shape - 1) in
+  let mask =
+    Nx.ones Nx.float32 [| sequence_length; sequence_length |]
+    |> Nx.tril |> Nx.cast Nx.bool |> Nx.broadcast_to shape
+  in
+  let scores = Nx.where mask scores (Nx.scalar_like scores (-1e9)) in
+  Nx.matmul (Nx.softmax ~axes:[ -1 ] scores) v
+
+let gelu_approx x =
+  let one = Nx.scalar_like x 1.0 in
+  let half = Nx.scalar_like x 0.5 in
+  let sqrt_two_over_pi = Nx.scalar_like x 0.7978845608 in
+  let coefficient = Nx.scalar_like x 0.044715 in
+  let argument =
+    Nx.mul
+      (Nx.mul x sqrt_two_over_pi)
+      (Nx.add one (Nx.mul coefficient (Nx.mul x x)))
+  in
+  Nx.mul half (Nx.mul x (Nx.add one (Nx.tanh argument)))
 
 let skip_cuda () = Sys.getenv_opt "RUNE_PJRT_TEST_SKIP_CUDA" <> None
 
@@ -17,7 +66,8 @@ let backend_available backend =
 
 let small_tensor rows cols scale =
   Nx.create Nx.float32 [| rows; cols |]
-    (Array.init (rows * cols) (fun i -> scale *. float_of_int ((i mod cols) + 1)))
+    (Array.init (rows * cols) (fun i ->
+         scale *. float_of_int ((i mod cols) + 1)))
 
 let small_vector n scale =
   Nx.create Nx.float32 [| n |]
@@ -41,8 +91,8 @@ let tiny_gpt2_like input_ids =
     |> Nx.broadcast_to [| batch; seq |]
     |> Nx.contiguous
   in
-  let tok = Kaun.Fn.embedding ~scale:false ~embedding:wte input_ids in
-  let pos = Kaun.Fn.embedding ~scale:false ~embedding:wpe position_ids in
+  let tok = embedding wte input_ids in
+  let pos = embedding wpe position_ids in
   let x = Nx.add tok pos in
   let qkv_w = small_tensor embed_dim (3 * embed_dim) 0.005 in
   let qkv_b = small_vector (3 * embed_dim) 0.001 in
@@ -55,7 +105,7 @@ let tiny_gpt2_like input_ids =
   let q = split_heads (layer_norm (List.nth qkv_parts 0)) in
   let k = split_heads (layer_norm (List.nth qkv_parts 1)) in
   let v = split_heads (layer_norm (List.nth qkv_parts 2)) in
-  let attn = Kaun.Fn.dot_product_attention ~is_causal:true q k v in
+  let attn = causal_attention q k v in
   let merged =
     Nx.transpose attn ~axes:[ 0; 2; 1; 3 ]
     |> Nx.contiguous
@@ -69,10 +119,10 @@ let tiny_gpt2_like input_ids =
   let ffn_up_b = small_vector inner_dim 0.001 in
   let ffn_down_w = small_tensor inner_dim embed_dim 0.002 in
   let ffn_down_b = small_vector embed_dim 0.001 in
-  let y =
-    Nx.add (Nx.matmul x' ffn_up_w) ffn_up_b |> Kaun.Activation.gelu_approx
+  let y = Nx.add (Nx.matmul x' ffn_up_w) ffn_up_b |> gelu_approx in
+  let hidden =
+    Nx.add x (Nx.add (Nx.matmul y ffn_down_w) ffn_down_b) |> layer_norm
   in
-  let hidden = Nx.add x (Nx.add (Nx.matmul y ffn_down_w) ffn_down_b) |> layer_norm in
   Nx.matmul hidden (Nx.transpose wte ~axes:[ 1; 0 ])
 
 let contains_substring haystack needle =
@@ -173,9 +223,8 @@ let test_gpt2_like_trace () =
           capture.program capture.outputs
       in
       compiled.module_text
-    with
-    | Rune_pjrt.Error.Error (Runtime_unavailable _) ->
-        Rune_pjrt.Stablehlo.of_program capture.program
+    with Rune_pjrt.Error.Error (Runtime_unavailable _) ->
+      Rune_pjrt.Stablehlo.of_program capture.program
   in
   if not (contains_substring module_text "stablehlo.gather") then
     failwith "test_gpt2_shape: gather did not lower to StableHLO";
@@ -210,6 +259,5 @@ let test_gpt2_like_trace () =
 
 let () =
   try test_gpt2_like_trace ()
-  with
-  | Rune_pjrt.Error.Error err ->
-      failwith ("test_gpt2_shape: " ^ Rune_pjrt.Error.to_string err)
+  with Rune_pjrt.Error.Error err ->
+    failwith ("test_gpt2_shape: " ^ Rune_pjrt.Error.to_string err)

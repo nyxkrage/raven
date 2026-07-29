@@ -1,0 +1,5 @@
+(install
+ (package rune-pjrt)
+ (section bin)
+ (files
+  (fetch_jax_plugin.py as rune-pjrt-fetch-plugin)))

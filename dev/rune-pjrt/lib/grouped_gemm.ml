@@ -6,13 +6,7 @@
 open Nx_core
 
 type t = Ffi.Kernel.t
-
-type problem = {
-  rows : int;
-  inner : int;
-  columns : int;
-  groups : int;
-}
+type problem = { rows : int; inner : int; columns : int; groups : int }
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
@@ -64,15 +58,14 @@ let validate ~lhs ~rhs ~group_sizes =
        %d"
       inner rhs_shape.(1);
   if group_shape.(0) <> groups then
-    invalid_argf
-      "Grouped_gemm: expected %d group sizes for rhs, got %d" groups
+    invalid_argf "Grouped_gemm: expected %d group sizes for rhs, got %d" groups
       group_shape.(0);
   let total = ref 0L in
   Nx.to_array group_sizes
   |> Array.iteri (fun group size ->
-         if Int32.compare size 0l < 0 then
-           invalid_argf "Grouped_gemm: group size %d is negative" group;
-         total := Int64.add !total (Int64.of_int32 size));
+      if Int32.compare size 0l < 0 then
+        invalid_argf "Grouped_gemm: group size %d is negative" group;
+      total := Int64.add !total (Int64.of_int32 size));
   if !total <> Int64.of_int rows then
     invalid_argf
       "Grouped_gemm: group sizes sum to %Ld, expected the lhs row count %d"
@@ -97,9 +90,7 @@ let reference_problem problem ~lhs ~rhs ~group_sizes =
       let group_rhs = Nx.get [ group ] rhs in
       let product =
         if uses_float32_accumulation (Nx.dtype lhs) then
-          Nx.matmul
-            (Nx.astype Nx.float32 lhs)
-            (Nx.astype Nx.float32 group_rhs)
+          Nx.matmul (Nx.astype Nx.float32 lhs) (Nx.astype Nx.float32 group_rhs)
           |> Nx.astype (Nx.dtype lhs)
         else Nx.matmul lhs group_rhs
       in

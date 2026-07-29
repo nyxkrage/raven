@@ -11,8 +11,8 @@ depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.21"}
   "dune-configurator" {build}
+  "conf-python-3"
   "nx"
-  "kaun" {with-test}
   "ppx_rune_kernel" {with-test}
   "tolk" {with-test}
 ]

@@ -294,6 +294,38 @@ static char* rune_load_pjrt_error(const char* prefix, const char* detail) {
   return msg;
 }
 
+static char* rune_validate_pjrt_api(const PJRT_Api* api) {
+  char message[192];
+  int length;
+
+  if (api->pjrt_api_version.major_version != PJRT_API_MAJOR) {
+    length = snprintf(
+        message, sizeof(message),
+        "PJRT API major version mismatch: plugin provides %d.%d, Rune "
+        "requires %d.%d",
+        api->pjrt_api_version.major_version,
+        api->pjrt_api_version.minor_version, PJRT_API_MAJOR, PJRT_API_MINOR);
+  } else if (api->struct_size < PJRT_Api_STRUCT_SIZE) {
+    length = snprintf(
+        message, sizeof(message),
+        "PJRT API is too small: plugin provides %zu bytes for version %d.%d, "
+        "Rune requires at least %zu bytes for version %d.%d",
+        api->struct_size, api->pjrt_api_version.major_version,
+        api->pjrt_api_version.minor_version, (size_t)PJRT_Api_STRUCT_SIZE,
+        PJRT_API_MAJOR, PJRT_API_MINOR);
+  } else {
+    return NULL;
+  }
+
+  if (length < 0) return rune_dup_cstr("could not validate PJRT API");
+  return rune_dup_cstr(message);
+}
+
+static int rune_is_cuda_plugin(const char* plugin_path) {
+  return strstr(plugin_path, "gpu_plugin") != NULL ||
+         strstr(plugin_path, "cuda_plugin") != NULL;
+}
+
 static rune_client_cache* rune_find_client_cache(const char* plugin_path,
                                                  int device_id) {
   rune_client_cache* runtime = rune_client_cache_head;
@@ -317,7 +349,7 @@ static char* rune_get_client(const char* plugin_path, int device_id,
   PJRT_Client* client = NULL;
   PJRT_Device* device = NULL;
   char* error_message = NULL;
-  int is_gpu = strstr(plugin_path, "gpu_plugin") != NULL;
+  int is_gpu = rune_is_cuda_plugin(plugin_path);
 
   if (runtime != NULL) {
     *out_runtime = runtime;
@@ -341,6 +373,8 @@ static char* rune_get_client(const char* plugin_path, int device_id,
     error_message = rune_dup_cstr("GetPjrtApi returned null");
     goto fail;
   }
+  error_message = rune_validate_pjrt_api(api);
+  if (error_message != NULL) goto fail;
 
   if (api->PJRT_Plugin_Initialize != NULL) {
     PJRT_Plugin_Initialize_Args init_args;
@@ -519,6 +553,8 @@ CAMLprim value caml_rune_pjrt_register_ffi_handler(
     error_message = rune_dup_cstr("GetPjrtApi returned NULL");
     goto fail;
   }
+  error_message = rune_validate_pjrt_api(api);
+  if (error_message != NULL) goto fail;
 
   extension = api->extension_start;
   while (extension != NULL && extension->type != PJRT_Extension_Type_FFI) {

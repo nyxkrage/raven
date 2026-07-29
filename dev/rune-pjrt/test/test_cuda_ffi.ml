@@ -183,4 +183,6 @@ let () =
     check_shape ~batch:1 ~heads:2 ~sequence:513;
     check_shape ~batch:1 ~heads:12 ~sequence:1024;
     check_extreme_mask_semantics ())
+  else if Sys.getenv_opt "RUNE_PJRT_TEST_REQUIRE_CUDA" <> None then
+    failwith ("test_cuda_ffi: " ^ Rune_pjrt.status ())
   else Printf.printf "test_cuda_ffi: CUDA plugin unavailable, skipping\n%!"

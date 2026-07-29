@@ -3,8 +3,8 @@
 type t
 
 val create : library:string -> ?symbol:string -> unit -> t
-(** [create ~library ?symbol ()] describes a CUDA grouped GEMM handler.
-    [symbol] defaults to ["raven_grouped_gemm_fwd"]. *)
+(** [create ~library ?symbol ()] describes a CUDA grouped GEMM handler. [symbol]
+    defaults to ["raven_grouped_gemm_fwd"]. *)
 
 val reference :
   lhs:(float, 'a) Nx.t ->

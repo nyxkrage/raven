@@ -1,7 +1,4 @@
-type lowered = {
-  body : string list;
-  outputs : (string * Ir.desc) list;
-}
+type lowered = { body : string list; outputs : (string * Ir.desc) list }
 
 val tensor_type : Ir.desc -> string
 

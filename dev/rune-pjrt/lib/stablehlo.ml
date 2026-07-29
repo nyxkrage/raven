@@ -6,13 +6,12 @@
 open Nx_core
 
 let unsupported name =
-  Error.raise (Error.Unsupported_program ("StableHLO lowering missing for " ^ name))
+  Error.raise
+    (Error.Unsupported_program ("StableHLO lowering missing for " ^ name))
 
 let find_node program id =
   match
-    List.find_opt
-      (fun (node : Ir.node) -> node.Ir.id = id)
-      program.Ir.nodes
+    List.find_opt (fun (node : Ir.node) -> node.Ir.id = id) program.Ir.nodes
   with
   | Some node -> node
   | None ->
@@ -48,14 +47,12 @@ let tensor_type (desc : Ir.desc) =
         (String.concat "x" (List.map string_of_int dims))
         elt
 
-let floating_literal ~precision ~positive_infinity ~negative_infinity ~nan
-    value =
+let floating_literal ~precision ~positive_infinity ~negative_infinity ~nan value
+    =
   match Float.classify_float value with
-  | FP_infinite ->
-      if value < 0.0 then negative_infinity else positive_infinity
+  | FP_infinite -> if value < 0.0 then negative_infinity else positive_infinity
   | FP_nan -> nan
-  | FP_normal | FP_subnormal | FP_zero ->
-      Printf.sprintf precision value
+  | FP_normal | FP_subnormal | FP_zero -> Printf.sprintf precision value
 
 let scalar_literal (type a b) (dtype : (a, b) Dtype.t) (value : a) =
   match dtype with
@@ -74,10 +71,9 @@ let scalar_literal (type a b) (dtype : (a, b) Dtype.t) (value : a) =
   | Float64 ->
       floating_literal ~precision:"%.17e"
         ~positive_infinity:"0x7FF0000000000000"
-        ~negative_infinity:"0xFFF0000000000000"
-        ~nan:"0x7FF8000000000000" (Obj.magic value : float)
-  | Float8_e4m3 | Float8_e5m2 ->
-      Printf.sprintf "%.9e" (Obj.magic value : float)
+        ~negative_infinity:"0xFFF0000000000000" ~nan:"0x7FF8000000000000"
+        (Obj.magic value : float)
+  | Float8_e4m3 | Float8_e5m2 -> Printf.sprintf "%.9e" (Obj.magic value : float)
   | Int4 | UInt4 | Int8 | UInt8 | Int16 | UInt16 ->
       string_of_int (Obj.magic value : int)
   | Int32 | UInt32 -> Int32.to_string (Obj.magic value : int32)
@@ -86,8 +82,7 @@ let scalar_literal (type a b) (dtype : (a, b) Dtype.t) (value : a) =
   | Complex64 | Complex128 ->
       unsupported ("complex constant " ^ Dtype.to_string dtype)
 
-let all_same first rest =
-  List.for_all (String.equal first) rest
+let all_same first rest = List.for_all (String.equal first) rest
 
 let literal_data (Ir.Literal { dtype; shape; buffer }) =
   let len = Nx_buffer.length buffer in
@@ -141,13 +136,11 @@ let pp_i64_array arr =
   Array.to_list arr |> List.map string_of_int |> String.concat ", "
 
 let pp_bool_array arr =
-  arr
-  |> Array.to_list
+  arr |> Array.to_list
   |> List.mapi (fun i flag -> if flag then Some (string_of_int i) else None)
   |> List.filter_map Fun.id |> String.concat ", "
 
-let pp_type_list descs =
-  descs |> List.map tensor_type |> String.concat ", "
+let pp_type_list descs = descs |> List.map tensor_type |> String.concat ", "
 
 let mlir_string value =
   let escaped = Buffer.create (String.length value + 2) in
@@ -173,15 +166,14 @@ let canonical_layout (desc : Ir.desc) =
     Printf.sprintf "dense<[%s]> : tensor<%dxindex>" minor_to_major rank
 
 let output_type program =
-  let descs = List.map (fun id -> (find_node program id).Ir.desc) program.Ir.outputs in
+  let descs =
+    List.map (fun id -> (find_node program id).Ir.desc) program.Ir.outputs
+  in
   match descs with
   | [ desc ] -> tensor_type desc
   | _ -> "(" ^ pp_type_list descs ^ ")"
 
-type lowered = {
-  body : string list;
-  outputs : (string * Ir.desc) list;
-}
+type lowered = { body : string list; outputs : (string * Ir.desc) list }
 
 let output_return ~indent lowered =
   let values, descs = List.split lowered.outputs in
@@ -197,9 +189,9 @@ let output_return ~indent lowered =
 let parameter_nodes program =
   program.Ir.nodes
   |> List.filter_map (fun node ->
-         match node.Ir.op with
-         | Ir.Parameter index -> Some (index, node.Ir.desc)
-         | _ -> None)
+      match node.Ir.op with
+      | Ir.Parameter index -> Some (index, node.Ir.desc)
+      | _ -> None)
   |> List.sort (fun (a, _) (b, _) -> Int.compare a b)
 
 let op_ref ~arg_name program id =
@@ -282,27 +274,23 @@ let reduce_combiner = function
 let expand_dims input_shape output_shape =
   let rank_in = Array.length input_shape in
   let rank_out = Array.length output_shape in
-  Array.init rank_in (fun i -> (rank_out - rank_in) + i)
+  Array.init rank_in (fun i -> rank_out - rank_in + i)
 
 let slice_sizes_attr arr = "array<i64: " ^ pp_i64_array arr ^ ">"
-
 let reverse_dims_attr dims = "array<i64: " ^ pp_i64_array dims ^ ">"
 
 let reduced_shape input_shape axes =
-  input_shape
-  |> Array.to_list
+  input_shape |> Array.to_list
   |> List.mapi (fun i dim -> (i, dim))
   |> List.filter_map (fun (i, dim) ->
-         if Array.exists (( = ) i) axes then None else Some dim)
+      if Array.exists (( = ) i) axes then None else Some dim)
   |> Array.of_list
 
 let gather_offset_dims ~axis ~indices_rank ~data_rank =
-  Array.init (data_rank - 1) (fun i ->
-      if i < axis then i else indices_rank + i)
+  Array.init (data_rank - 1) (fun i -> if i < axis then i else indices_rank + i)
 
 let slice_spec limits =
-  limits
-  |> Array.to_list
+  limits |> Array.to_list
   |> List.map (fun (lo, hi) -> Printf.sprintf "%d:%d" lo hi)
   |> String.concat ", "
 
@@ -332,20 +320,19 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
       else
         Some
           (Printf.sprintf "%s%%v%d = stablehlo.reshape %s : (%s) -> %s" indent
-             node.Ir.id
-             value ty ty)
+             node.Ir.id value ty ty)
   | Unary { op = Recip; input } ->
       let input_ty = tensor_type (find_node program input).Ir.desc in
       let one = scalar_one_literal node.Ir.desc.dtype in
       Some
         (String.concat "\n"
            [
-             Printf.sprintf
-               "%s%%v%d_one = stablehlo.constant dense<%s> : %s" indent
-               node.Ir.id one input_ty;
-             Printf.sprintf
-               "%s%%v%d = stablehlo.divide %%v%d_one, %s : %s" indent
-               node.Ir.id node.Ir.id (op_ref ~arg_name program input) input_ty;
+             Printf.sprintf "%s%%v%d_one = stablehlo.constant dense<%s> : %s"
+               indent node.Ir.id one input_ty;
+             Printf.sprintf "%s%%v%d = stablehlo.divide %%v%d_one, %s : %s"
+               indent node.Ir.id node.Ir.id
+               (op_ref ~arg_name program input)
+               input_ty;
            ])
   | Unary { op = Erf; input } ->
       let input_ty = tensor_type (find_node program input).Ir.desc in
@@ -356,25 +343,33 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
   | Unary { op; input } ->
       Some
         (Printf.sprintf "%s%%v%d = %s %s : %s" indent node.Ir.id
-           (lower_unary op) (op_ref ~arg_name program input) ty)
+           (lower_unary op)
+           (op_ref ~arg_name program input)
+           ty)
   | Binary { op = (CmpEq | CmpNe | CmpLt | CmpLe) as op; lhs; rhs } ->
       let lhs_ty = tensor_type (find_node program lhs).Ir.desc in
       let rhs_ty = tensor_type (find_node program rhs).Ir.desc in
       Some
         (Printf.sprintf
            "%s%%v%d = stablehlo.compare  %s, %s, %s : (%s, %s) -> %s" indent
-           node.Ir.id (compare_direction op) (op_ref ~arg_name program lhs)
-           (op_ref ~arg_name program rhs) lhs_ty rhs_ty ty)
+           node.Ir.id (compare_direction op)
+           (op_ref ~arg_name program lhs)
+           (op_ref ~arg_name program rhs)
+           lhs_ty rhs_ty ty)
   | Binary { op; lhs; rhs } ->
       Some
         (Printf.sprintf "%s%%v%d = %s %s, %s : %s" indent node.Ir.id
-           (lower_binary op) (op_ref ~arg_name program lhs)
-           (op_ref ~arg_name program rhs) ty)
+           (lower_binary op)
+           (op_ref ~arg_name program lhs)
+           (op_ref ~arg_name program rhs)
+           ty)
   | Reshape { input; _ } ->
       let input_ty = tensor_type (find_node program input).Ir.desc in
       Some
         (Printf.sprintf "%s%%v%d = stablehlo.reshape %s : (%s) -> %s" indent
-           node.Ir.id (op_ref ~arg_name program input) input_ty ty)
+           node.Ir.id
+           (op_ref ~arg_name program input)
+           input_ty ty)
   | Expand { input; shape } ->
       let input_desc = (find_node program input).Ir.desc in
       let dims = expand_dims input_desc.shape shape in
@@ -382,27 +377,33 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
       Some
         (Printf.sprintf
            "%s%%v%d = stablehlo.broadcast_in_dim %s, dims = %s : (%s) -> %s"
-           indent node.Ir.id (op_ref ~arg_name program input) (dims_attr dims)
-           input_ty ty)
+           indent node.Ir.id
+           (op_ref ~arg_name program input)
+           (dims_attr dims) input_ty ty)
   | Permute { input; axes } ->
       let input_ty = tensor_type (find_node program input).Ir.desc in
       Some
         (Printf.sprintf
            "%s%%v%d = stablehlo.transpose %s, dims = %s : (%s) -> %s" indent
-           node.Ir.id (op_ref ~arg_name program input) (dims_attr axes)
-           input_ty ty)
+           node.Ir.id
+           (op_ref ~arg_name program input)
+           (dims_attr axes) input_ty ty)
   | Cast { input; _ } ->
       let input_ty = tensor_type (find_node program input).Ir.desc in
       Some
         (Printf.sprintf "%s%%v%d = stablehlo.convert %s : (%s) -> %s" indent
-           node.Ir.id (op_ref ~arg_name program input) input_ty ty)
+           node.Ir.id
+           (op_ref ~arg_name program input)
+           input_ty ty)
   | Where { condition; if_true; if_false } ->
       let cond_ty = tensor_type (find_node program condition).Ir.desc in
       Some
-        (Printf.sprintf "%s%%v%d = stablehlo.select %s, %s, %s : %s, %s"
-           indent node.Ir.id (op_ref ~arg_name program condition)
+        (Printf.sprintf "%s%%v%d = stablehlo.select %s, %s, %s : %s, %s" indent
+           node.Ir.id
+           (op_ref ~arg_name program condition)
            (op_ref ~arg_name program if_true)
-           (op_ref ~arg_name program if_false) cond_ty ty)
+           (op_ref ~arg_name program if_false)
+           cond_ty ty)
   | Reduce { op; input; axes; keepdims } ->
       let combiner = reduce_combiner op in
       let init = reduce_init_literal op node.Ir.desc.dtype in
@@ -414,24 +415,23 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
       let reduced_ty = tensor_type reduced_desc in
       let base =
         Printf.sprintf
-          "%s%%v%d_raw = stablehlo.reduce(%s init: %%v%d_init) applies %s across \
-           dimensions = %s : (%s, %s) -> %s"
-          indent node.Ir.id (op_ref ~arg_name program input) node.Ir.id combiner
-          (dims_attr axes)
-          input_ty
+          "%s%%v%d_raw = stablehlo.reduce(%s init: %%v%d_init) applies %s \
+           across dimensions = %s : (%s, %s) -> %s"
+          indent node.Ir.id
+          (op_ref ~arg_name program input)
+          node.Ir.id combiner (dims_attr axes) input_ty
           (tensor_type { shape = [||]; dtype = node.Ir.desc.dtype })
           reduced_ty
       in
       let init_line =
-        Printf.sprintf "%s%%v%d_init = stablehlo.constant dense<%s> : %s"
-          indent node.Ir.id init
+        Printf.sprintf "%s%%v%d_init = stablehlo.constant dense<%s> : %s" indent
+          node.Ir.id init
           (tensor_type { shape = [||]; dtype = node.Ir.desc.dtype })
       in
       if keepdims then
         let reshape =
-          Printf.sprintf
-            "%s%%v%d = stablehlo.reshape %%v%d_raw : (%s) -> %s" indent
-            node.Ir.id node.Ir.id reduced_ty ty
+          Printf.sprintf "%s%%v%d = stablehlo.reshape %%v%d_raw : (%s) -> %s"
+            indent node.Ir.id node.Ir.id reduced_ty ty
         in
         Some (String.concat "\n" [ init_line; base; reshape ])
       else
@@ -462,20 +462,16 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
         { node.Ir.desc with shape = reduced_shape input_desc.shape [| axis |] }
       in
       let reduced_index_ty = tensor_type reduced_index_desc in
-      let input_scalar_ty =
-        tensor_type { input_desc with shape = [||] }
-      in
+      let input_scalar_ty = tensor_type { input_desc with shape = [||] } in
       let index_scalar_ty = tensor_type { index_desc with shape = [||] } in
-      let init_value =
-        reduce_init_literal Ir.Reduce_max input_desc.dtype
-      in
+      let init_value = reduce_init_literal Ir.Reduce_max input_desc.dtype in
       let init_index = "0" in
       let base_name = Printf.sprintf "%%v%d_argmax" node.Ir.id in
       Some
         (String.concat "\n"
            [
-             Printf.sprintf "%s%%v%d_iota = stablehlo.iota dim = %d : %s"
-               indent node.Ir.id axis index_ty;
+             Printf.sprintf "%s%%v%d_iota = stablehlo.iota dim = %d : %s" indent
+               node.Ir.id axis index_ty;
              Printf.sprintf
                "%s%%v%d_init_value = stablehlo.constant dense<%s> : %s" indent
                node.Ir.id init_value input_scalar_ty;
@@ -483,29 +479,34 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
                "%s%%v%d_init_index = stablehlo.constant dense<%s> : %s" indent
                node.Ir.id init_index index_scalar_ty;
              Printf.sprintf
-               "%s%s:2 = stablehlo.reduce(%s init: %%v%d_init_value), (%%v%d_iota \
-                init: %%v%d_init_index) across dimensions = %s : (%s, %s, %s, \
-                %s) -> (%s, %s)"
-               indent base_name (op_ref ~arg_name program input) node.Ir.id
-               node.Ir.id node.Ir.id (dims_attr [| axis |]) input_ty index_ty
-               input_scalar_ty index_scalar_ty reduced_value_ty reduced_index_ty;
+               "%s%s:2 = stablehlo.reduce(%s init: %%v%d_init_value), \
+                (%%v%d_iota init: %%v%d_init_index) across dimensions = %s : \
+                (%s, %s, %s, %s) -> (%s, %s)"
+               indent base_name
+               (op_ref ~arg_name program input)
+               node.Ir.id node.Ir.id node.Ir.id (dims_attr [| axis |]) input_ty
+               index_ty input_scalar_ty index_scalar_ty reduced_value_ty
+               reduced_index_ty;
              Printf.sprintf
                "%s  reducer(%s_lhs_value: %s, %s_rhs_value: %s) (%s_lhs_index: \
                 %s, %s_rhs_index: %s) {"
-               indent base_name input_scalar_ty base_name input_scalar_ty base_name
-               index_scalar_ty base_name index_scalar_ty;
+               indent base_name input_scalar_ty base_name input_scalar_ty
+               base_name index_scalar_ty base_name index_scalar_ty;
              Printf.sprintf
                "%s    %s_gt = stablehlo.compare  GT, %s_rhs_value, \
                 %s_lhs_value : (%s, %s) -> tensor<i1>"
-               indent base_name base_name base_name input_scalar_ty input_scalar_ty;
+               indent base_name base_name base_name input_scalar_ty
+               input_scalar_ty;
              Printf.sprintf
                "%s    %s_eq = stablehlo.compare  EQ, %s_rhs_value, \
                 %s_lhs_value : (%s, %s) -> tensor<i1>"
-               indent base_name base_name base_name input_scalar_ty input_scalar_ty;
+               indent base_name base_name base_name input_scalar_ty
+               input_scalar_ty;
              Printf.sprintf
                "%s    %s_idx_lt = stablehlo.compare  LT, %s_rhs_index, \
                 %s_lhs_index : (%s, %s) -> tensor<i1>"
-               indent base_name base_name base_name index_scalar_ty index_scalar_ty;
+               indent base_name base_name base_name index_scalar_ty
+               index_scalar_ty;
              Printf.sprintf
                "%s    %s_value = stablehlo.select %s_gt, %s_rhs_value, \
                 %s_lhs_value : tensor<i1>, %s"
@@ -519,18 +520,19 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
                 %s_lhs_index : tensor<i1>, %s"
                indent base_name base_name base_name base_name index_scalar_ty;
              Printf.sprintf
-               "%s    %s_index = stablehlo.select %s_eq, %s_idx_eq, %s_idx_gt : \
-                tensor<i1>, %s"
+               "%s    %s_index = stablehlo.select %s_eq, %s_idx_eq, %s_idx_gt \
+                : tensor<i1>, %s"
                indent base_name base_name base_name base_name index_scalar_ty;
              Printf.sprintf "%s    stablehlo.return %s_value, %s_index : %s, %s"
                indent base_name base_name input_scalar_ty index_scalar_ty;
              Printf.sprintf "%s  }" indent;
-             Printf.sprintf
-               "%s%%v%d = stablehlo.reshape %s#1 : (%s) -> %s" indent
-               node.Ir.id base_name reduced_index_ty ty;
+             Printf.sprintf "%s%%v%d = stablehlo.reshape %s#1 : (%s) -> %s"
+               indent node.Ir.id base_name reduced_index_ty ty;
            ])
   | Arg_reduce { op; _ } ->
-      unsupported (Ir.op_name (Ir.Arg_reduce { op; input = 0; axis = 0; keepdims = false }))
+      unsupported
+        (Ir.op_name
+           (Ir.Arg_reduce { op; input = 0; axis = 0; keepdims = false }))
   | Matmul { lhs; rhs } ->
       let lhs_desc = (find_node program lhs).Ir.desc in
       let rhs_desc = (find_node program rhs).Ir.desc in
@@ -541,9 +543,7 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
         else if lhs_rank >= 2 && rhs_rank = 2 then
           ("[] x []", Printf.sprintf "[%d] x [0]" (lhs_rank - 1))
         else if lhs_rank = rhs_rank && lhs_rank >= 3 then
-          let batch =
-            Array.init (lhs_rank - 2) Fun.id |> dims_attr
-          in
+          let batch = Array.init (lhs_rank - 2) Fun.id |> dims_attr in
           ( Printf.sprintf "%s x %s" batch batch,
             Printf.sprintf "[%d] x [%d]" (lhs_rank - 1) (rhs_rank - 2) )
         else unsupported "matmul ranks"
@@ -552,9 +552,10 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
         (Printf.sprintf
            "%s%%v%d = stablehlo.dot_general %s, %s, batching_dims = %s, \
             contracting_dims = %s, precision = [] : (%s, %s) -> %s"
-           indent node.Ir.id (op_ref ~arg_name program lhs)
-           (op_ref ~arg_name program rhs) batching
-           contracting (tensor_type lhs_desc) (tensor_type rhs_desc) ty)
+           indent node.Ir.id
+           (op_ref ~arg_name program lhs)
+           (op_ref ~arg_name program rhs)
+           batching contracting (tensor_type lhs_desc) (tensor_type rhs_desc) ty)
   | Custom_call { handler; inputs } ->
       let refs =
         List.map (op_ref ~arg_name program) inputs |> String.concat ", "
@@ -574,7 +575,8 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
             backend_config = {}, call_target_name = %S, operand_layouts = \
             [%s], result_layouts = [%s]} : (%s) -> %s"
            indent node.Ir.id refs handler.target operand_layouts
-           (canonical_layout node.Ir.desc) input_types ty)
+           (canonical_layout node.Ir.desc)
+           input_types ty)
   | Triton_call { kernel; inputs } ->
       let refs =
         List.map (op_ref ~arg_name program) inputs |> String.concat ", "
@@ -592,18 +594,21 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
         Printf.sprintf
           "{name = %s, ir = %s, num_stages = %d : i32, num_warps = %d : i32, \
            grid_x = %d : i32, grid_y = %d : i32, grid_z = %d : i32, debug = \
-           false, is_tma_allowed = false, global_scratch_memory_size = 0 : i32}"
+           false, is_tma_allowed = false, global_scratch_memory_size = 0 : \
+           i32}"
           (mlir_string kernel.name) (mlir_string kernel.ir) kernel.num_stages
           kernel.num_warps kernel.grid_x kernel.grid_y kernel.grid_z
       in
       Some
         (Printf.sprintf
            "%s%%v%d = \"stablehlo.custom_call\"(%s) {api_version = 1 : i32, \
-            backend_config = %s, call_target_name = \
-            \"__gpu$xla.gpu.triton\", operand_layouts = [%s], result_layouts \
-            = [%s]} : (%s) -> %s"
-           indent node.Ir.id refs (mlir_string backend_config) operand_layouts
-           (canonical_layout node.Ir.desc) input_types ty)
+            backend_config = %s, call_target_name = \"__gpu$xla.gpu.triton\", \
+            operand_layouts = [%s], result_layouts = [%s]} : (%s) -> %s"
+           indent node.Ir.id refs
+           (mlir_string backend_config)
+           operand_layouts
+           (canonical_layout node.Ir.desc)
+           input_types ty)
   | Cat { inputs; axis } ->
       let refs =
         List.map (op_ref ~arg_name program) inputs |> String.concat ", "
@@ -620,8 +625,9 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
   | Shrink { input; limits } ->
       let input_ty = tensor_type (find_node program input).Ir.desc in
       Some
-        (Printf.sprintf "%s%%v%d = stablehlo.slice %s [%s] : (%s) -> %s"
-           indent node.Ir.id (op_ref ~arg_name program input)
+        (Printf.sprintf "%s%%v%d = stablehlo.slice %s [%s] : (%s) -> %s" indent
+           node.Ir.id
+           (op_ref ~arg_name program input)
            (slice_spec limits) input_ty ty)
   | Flip { input; dims } ->
       let input_ty = tensor_type (find_node program input).Ir.desc in
@@ -633,7 +639,8 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
       Some
         (Printf.sprintf
            "%s%%v%d = \"stablehlo.reverse\"(%s) {dimensions = %s} : (%s) -> %s"
-           indent node.Ir.id (op_ref ~arg_name program input)
+           indent node.Ir.id
+           (op_ref ~arg_name program input)
            (reverse_dims_attr dims) input_ty ty)
   | Gather { data; indices; axis = 0 } ->
       let data_desc = (find_node program data).Ir.desc in
@@ -647,9 +654,7 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
       let indices_desc = (find_node program indices).Ir.desc in
       let data_rank = Array.length data_desc.shape in
       let indices_rank = Array.length indices_desc.shape in
-      let offset_dims =
-        gather_offset_dims ~axis:0 ~indices_rank ~data_rank
-      in
+      let offset_dims = gather_offset_dims ~axis:0 ~indices_rank ~data_rank in
       let slice_sizes =
         Array.mapi (fun i dim -> if i = 0 then 1 else dim) data_desc.shape
       in
@@ -659,14 +664,14 @@ let lower_node ~indent ~arg_name program (node : Ir.node) =
             #stablehlo.gather<offset_dims = %s, collapsed_slice_dims = [0], \
             start_index_map = [0], index_vector_dim = %d>, indices_are_sorted \
             = false, slice_sizes = %s}> : (%s, %s) -> %s"
-           indent node.Ir.id (op_ref ~arg_name program data)
-           (op_ref ~arg_name program indices) (dims_attr offset_dims)
-           indices_rank (slice_sizes_attr slice_sizes) (tensor_type data_desc)
-           (tensor_type indices_desc) ty)
-  | Gather _ ->
-      unsupported "gather axis"
-  | op ->
-      unsupported (Ir.op_name op)
+           indent node.Ir.id
+           (op_ref ~arg_name program data)
+           (op_ref ~arg_name program indices)
+           (dims_attr offset_dims) indices_rank
+           (slice_sizes_attr slice_sizes)
+           (tensor_type data_desc) (tensor_type indices_desc) ty)
+  | Gather _ -> unsupported "gather axis"
+  | op -> unsupported (Ir.op_name op)
 
 let lower_program ?(indent = "  ") ~arg_name program =
   let program = Ir.prune program in
@@ -684,11 +689,12 @@ let of_program program =
   let params =
     parameter_nodes program
     |> List.map (fun (index, desc) ->
-           Printf.sprintf "%%arg%d: %s" index (tensor_type desc))
+        Printf.sprintf "%%arg%d: %s" index (tensor_type desc))
     |> String.concat ", "
   in
   let lowered =
-    lower_program program ~arg_name:(fun index -> Printf.sprintf "%%arg%d" index)
+    lower_program program ~arg_name:(fun index ->
+        Printf.sprintf "%%arg%d" index)
   in
   String.concat "\n"
     [

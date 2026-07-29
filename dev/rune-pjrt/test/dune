@@ -6,7 +6,7 @@
   test_grouped_gemm
   test_runtime
   test_triton)
- (libraries rune_pjrt nx rune kaun unix))
+ (libraries rune_pjrt nx rune unix))
 
 (test
  (name test_ppx)
@@ -20,7 +20,8 @@
  (name test_cuda_ffi)
  (package rune-pjrt)
  (modules test_cuda_ffi)
- (enabled_if (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
+ (enabled_if
+  (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
  (deps ../kernels/causal_scaled_softmax.so)
  (libraries rune_pjrt nx rune)
  (preprocess
@@ -30,7 +31,8 @@
  (name test_cuda_grouped_gemm)
  (package rune-pjrt)
  (modules test_cuda_grouped_gemm)
- (enabled_if (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
+ (enabled_if
+  (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
  (deps ../kernels/grouped_gemm.so)
  (libraries rune_pjrt nx rune))
 
@@ -38,7 +40,8 @@
  (name test_cuda_triton)
  (package rune-pjrt)
  (modules test_cuda_triton)
- (enabled_if (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
+ (enabled_if
+  (= %{env:RUNE_PJRT_CUDA_KERNELS=disabled} enabled))
  (libraries rune_pjrt nx rune)
  (preprocess
   (pps ppx_rune_kernel)))

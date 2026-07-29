@@ -21,8 +21,7 @@ let runner =
         let sizes : Nx.int32_t = Obj.magic sizes in
         [
           Rune_pjrt.Tensor
-            (Rune_pjrt.Grouped_gemm.run kernel ~lhs ~rhs
-               ~group_sizes:sizes);
+            (Rune_pjrt.Grouped_gemm.run kernel ~lhs ~rhs ~group_sizes:sizes);
         ]
     | _ -> failwith "test_cuda_grouped_gemm: expected three inputs")
 
@@ -30,9 +29,7 @@ let run lhs rhs group_sizes =
   match
     runner
       [
-        Rune_pjrt.Tensor lhs;
-        Rune_pjrt.Tensor rhs;
-        Rune_pjrt.Tensor group_sizes;
+        Rune_pjrt.Tensor lhs; Rune_pjrt.Tensor rhs; Rune_pjrt.Tensor group_sizes;
       ]
   with
   | [ Rune_pjrt.Tensor output ] -> Obj.magic output
@@ -58,8 +55,8 @@ let expected (type a) (dtype : (float, a) Nx.dtype) group_values lhs rhs =
           for offset = 0 to inner - 1 do
             sum :=
               !sum
-              +. (lhs.((row * inner) + offset)
-                 *. rhs.((((group * inner) + offset) * columns) + column))
+              +. lhs.((row * inner) + offset)
+                 *. rhs.((((group * inner) + offset) * columns) + column)
           done;
           output.((row * columns) + column) <- !sum
         done
@@ -92,8 +89,8 @@ let print_sample expected actual error_index =
       actual.(index)
   done
 
-let check_case (type a) name (dtype : (float, a) Nx.dtype) tolerance
-    ~rows ~inner ~columns ~groups layouts =
+let check_case (type a) name (dtype : (float, a) Nx.dtype) tolerance ~rows
+    ~inner ~columns ~groups layouts =
   let lhs =
     Nx.init dtype [| rows; inner |] (fun indices ->
         let row = float_of_int indices.(0) in
@@ -110,9 +107,7 @@ let check_case (type a) name (dtype : (float, a) Nx.dtype) tolerance
   let check_layout (layout, group_values) =
     let group_sizes = Nx.create Nx.int32 [| groups |] group_values in
     let expected = expected dtype group_values lhs rhs in
-    let reference =
-      Rune_pjrt.Grouped_gemm.reference ~lhs ~rhs ~group_sizes
-    in
+    let reference = Rune_pjrt.Grouped_gemm.reference ~lhs ~rhs ~group_sizes in
     let reference_error, reference_error_index =
       max_abs_error expected reference
     in
@@ -127,8 +122,8 @@ let check_case (type a) name (dtype : (float, a) Nx.dtype) tolerance
     let error, error_index = max_abs_error expected actual in
     Printf.printf "%s %s max_abs=%.9g\n%!" name layout error;
     if error > tolerance then (
-      Printf.printf "max error at row=%d column=%d\n%!"
-        (error_index / columns) (error_index mod columns);
+      Printf.printf "max error at row=%d column=%d\n%!" (error_index / columns)
+        (error_index mod columns);
       print_sample expected actual error_index;
       failwith
         (Printf.sprintf
@@ -140,48 +135,41 @@ let check_case (type a) name (dtype : (float, a) Nx.dtype) tolerance
 let () =
   if Rune_pjrt.backend_available `Cuda then (
     let generic_layouts =
-      [
-        ("initial", group_values);
-        ("rebalanced", alternate_group_values);
-      ]
+      [ ("initial", group_values); ("rebalanced", alternate_group_values) ]
     in
-    check_case "f32 generic" Nx.float32 2e-5 ~rows ~inner ~columns
-      ~groups generic_layouts;
-    check_case "f16 generic" Nx.float16 2e-2 ~rows ~inner ~columns
-      ~groups generic_layouts;
-    check_case "bf16 generic" Nx.bfloat16 8e-2 ~rows ~inner ~columns
-      ~groups generic_layouts;
+    check_case "f32 generic" Nx.float32 2e-5 ~rows ~inner ~columns ~groups
+      generic_layouts;
+    check_case "f16 generic" Nx.float16 2e-2 ~rows ~inner ~columns ~groups
+      generic_layouts;
+    check_case "bf16 generic" Nx.bfloat16 8e-2 ~rows ~inner ~columns ~groups
+      generic_layouts;
     let tensor32_layouts =
       [
         ("sparse", [| 0l; 1l; 63l; 65l; 0l; 7l |]);
         ("rebalanced", [| 32l; 17l; 0l; 64l; 23l; 0l |]);
       ]
     in
-    check_case "f16 tensor32" Nx.float16 2e-2 ~rows:136 ~inner:40
-      ~columns:72 ~groups:6 tensor32_layouts;
-    check_case "bf16 tensor32" Nx.bfloat16 8e-2 ~rows:136 ~inner:40
-      ~columns:72 ~groups:6 tensor32_layouts;
+    check_case "f16 tensor32" Nx.float16 2e-2 ~rows:136 ~inner:40 ~columns:72
+      ~groups:6 tensor32_layouts;
+    check_case "bf16 tensor32" Nx.bfloat16 8e-2 ~rows:136 ~inner:40 ~columns:72
+      ~groups:6 tensor32_layouts;
     let tensor64_layouts =
-      [
-        ("sparse", [| 0l; 136l |]);
-        ("rebalanced", [| 65l; 71l |]);
-      ]
+      [ ("sparse", [| 0l; 136l |]); ("rebalanced", [| 65l; 71l |]) ]
     in
-    check_case "f16 tensor64" Nx.float16 2e-2 ~rows:136 ~inner:40
-      ~columns:72 ~groups:2 tensor64_layouts;
-    check_case "bf16 tensor64" Nx.bfloat16 8e-2 ~rows:136 ~inner:40
-      ~columns:72 ~groups:2 tensor64_layouts;
+    check_case "f16 tensor64" Nx.float16 2e-2 ~rows:136 ~inner:40 ~columns:72
+      ~groups:2 tensor64_layouts;
+    check_case "bf16 tensor64" Nx.bfloat16 8e-2 ~rows:136 ~inner:40 ~columns:72
+      ~groups:2 tensor64_layouts;
     let many_groups = 35 in
     let sparse_groups =
       Array.init many_groups (fun group -> if group = 34 then 70l else 0l)
     in
     let balanced_groups = Array.make many_groups 2l in
-    check_case "f16 many-groups" Nx.float16 2e-2 ~rows:70 ~inner:40
-      ~columns:72 ~groups:many_groups
-      [
-        ("sparse", sparse_groups);
-        ("balanced", balanced_groups);
-      ])
+    check_case "f16 many-groups" Nx.float16 2e-2 ~rows:70 ~inner:40 ~columns:72
+      ~groups:many_groups
+      [ ("sparse", sparse_groups); ("balanced", balanced_groups) ])
+  else if Sys.getenv_opt "RUNE_PJRT_TEST_REQUIRE_CUDA" <> None then
+    failwith ("test_cuda_grouped_gemm: " ^ Rune_pjrt.status ())
   else
     Printf.printf
       "test_cuda_grouped_gemm: CUDA plugin unavailable, skipping\n%!"

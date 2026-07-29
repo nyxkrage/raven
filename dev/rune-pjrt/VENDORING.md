@@ -1,7 +1,16 @@
 # Vendoring
 
-Third-party source trees for the PJRT/XLA path belong in the repository root
-`vendor/` directory, not under `dev/rune-pjrt/`.
+The package ships the PJRT C API headers needed to compile its native bridge
+and the XLA FFI C header needed to compile its example CUDA kernels under
+`dev/rune-pjrt/vendor/`. Their upstream Apache 2.0 license is included beside
+them. Full third-party source trees belong in the repository root `vendor/`
+directory.
+
+The bundled headers make release archives self-contained; they are not an XLA
+source checkout and cannot build a PJRT plugin. When no plugin is supplied,
+`rune-pjrt` can extract the prebuilt CUDA plugin from the official
+`jax-cuda13-pjrt` or `jax-cuda12-pjrt` wheel at runtime. Downloaded wheels and
+plugins remain in the user cache and are never vendored into the source tree.
 
 ## Expected Layout
 
