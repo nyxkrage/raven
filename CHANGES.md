@@ -36,6 +36,8 @@ thread.
 
 ### Nx
 
+- Keep `Nx.sigmoid` constants scalar so JIT backends fuse the standard
+  `1 / (1 + exp (-x))` expression without reading a full-sized ones tensor.
 - Fix float16 conversion in the C backend so casts and float16 operations
   preserve the mantissa, round ties to even, and retain subnormal values.
 - Remove `~out` parameter from all backend compute operations. Operations now
@@ -59,6 +61,12 @@ thread.
 
 ### Rune
 
+- Add `Rune_pjrt.Device_buffer`, `jit_device`, and their multi-tensor forms for
+  asynchronous PJRT execution that keeps values on the device across compiled
+  calls.
+- Transfer PJRT inputs and outputs directly between `Nx_buffer` storage and
+  PJRT, and overlap host staging for multi-input calls. This removes
+  intermediate copies and idle CUDA transfer time.
 - Add a typed `Rune_pjrt.Triton.Dsl` for PJRT CUDA kernels. It supports
   shape-specialized blocked programs, explicit masked memory, integer and
   floating-point values, device loops, reductions, mixed-dtype casts, and

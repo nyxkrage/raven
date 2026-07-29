@@ -548,10 +548,8 @@ module Make (B : Backend_intf.S) = struct
 
   let sigmoid x =
     let dt = dtype x in
-    let neg_one_over_log2 =
-      B.full (B.context x) dt [||] (Dtype.of_float dt (-1.0 /. Stdlib.log 2.0))
-    in
-    recip (add (ones_like x) (exp2 (mul x neg_one_over_log2)))
+    let one = scalar (B.context x) dt (Dtype.one dt) in
+    recip (add one (exp (neg x)))
 
   let rsqrt x = recip (sqrt x)
   let asin x = unaryop B.asin x

@@ -6,6 +6,7 @@
 type compiled = {
   backend : Backend.t;
   device_id : int;
+  plugin_path : string;
   cache_key : string;
   signature : Signature.t;
   program : Ir.program;
@@ -18,6 +19,19 @@ type compiled = {
   mutable ffi_registered : bool;
 }
 
+type native_buffer
+
+type ('a, 'b) device_buffer = {
+  native : native_buffer;
+  backend : Backend.t;
+  device_id : int;
+  dtype : ('a, 'b) Nx_core.Dtype.t;
+  shape : int array;
+}
+
+type packed_device_buffer =
+  | Device_buffer : ('a, 'b) device_buffer -> packed_device_buffer
+
 external native_execute :
   plugin_path:string ->
   cache_key:string ->
@@ -25,13 +39,43 @@ external native_execute :
   stablehlo:string ->
   dynamic_input_dtypes:string array ->
   dynamic_input_shapes:int array array ->
-  dynamic_input_data:string array ->
+  dynamic_input_data:Obj.t array ->
   constant_input_dtypes:string array ->
   constant_input_shapes:int array array ->
   constant_input_data:string array ->
   output_dtypes:string array ->
   output_shapes:int array array ->
-  string array = "caml_rune_pjrt_execute_bc" "caml_rune_pjrt_execute"
+  output_data:Obj.t array ->
+  unit = "caml_rune_pjrt_execute_bc" "caml_rune_pjrt_execute"
+
+external native_buffer_of_host :
+  plugin_path:string ->
+  device_id:int ->
+  dtype:string ->
+  shape:int array ->
+  data:Obj.t ->
+  native_buffer = "caml_rune_pjrt_buffer_of_host"
+
+external native_buffer_to_host :
+  native_buffer -> dtype:string -> shape:int array -> data:Obj.t -> unit
+  = "caml_rune_pjrt_buffer_to_host"
+
+external native_buffer_await : native_buffer -> unit
+  = "caml_rune_pjrt_buffer_await"
+
+external native_execute_device :
+  plugin_path:string ->
+  cache_key:string ->
+  device_id:int ->
+  stablehlo:string ->
+  dynamic_input_buffers:native_buffer array ->
+  constant_input_dtypes:string array ->
+  constant_input_shapes:int array array ->
+  constant_input_data:string array ->
+  output_dtypes:string array ->
+  output_shapes:int array array ->
+  native_buffer array
+  = "caml_rune_pjrt_execute_device_bc" "caml_rune_pjrt_execute_device"
 
 external native_register_ffi_handler :
   plugin_path:string ->
@@ -622,9 +666,11 @@ let compile ~backend ~device_id ~signature program output_examples =
          (Printf.sprintf "PJRT %s plugin missing at %s"
             (Backend.to_string backend)
             (plugin_path backend)));
+  let plugin_path = plugin_path backend in
   {
     backend;
     device_id;
+    plugin_path;
     cache_key;
     signature;
     program;
@@ -657,9 +703,11 @@ let compile_stablehlo ~backend ~device_id ~signature ~module_text ~output_descs
          (Printf.sprintf "PJRT %s plugin missing at %s"
             (Backend.to_string backend)
             (plugin_path backend)));
+  let plugin_path = plugin_path backend in
   {
     backend;
     device_id;
+    plugin_path;
     cache_key;
     signature;
     program;
@@ -672,43 +720,26 @@ let compile_stablehlo ~backend ~device_id ~signature ~module_text ~output_descs
     ffi_registered = false;
   }
 
-let tensor_data_string (type a b) (dtype : (a, b) Nx_core.Dtype.t)
-    (tensor : (a, b) Nx.t) =
-  let buffer = Nx.data (Nx.contiguous tensor) in
-  let bytes =
-    Bytes.create (Nx_buffer.length buffer * Nx_core.Dtype.itemsize dtype)
-  in
-  Nx_buffer.blit_to_bytes buffer bytes;
-  Bytes.unsafe_to_string bytes
-
-let tensor_of_output desc data =
+let tensor_of_output desc =
   let shape = desc.Ir.shape in
-  let expected_elems = Array.fold_left ( * ) 1 shape in
+  let numel = Array.fold_left ( * ) 1 shape in
   match Nx_core.Dtype.Packed.of_string desc.dtype with
   | None ->
       Error.raise
         (Error.Runtime_unavailable
            (Printf.sprintf "unknown dtype in output descriptor: %s" desc.dtype))
   | Some (Nx_core.Dtype.Pack dtype) ->
-      let expected_bytes = expected_elems * Nx_core.Dtype.itemsize dtype in
-      if String.length data <> expected_bytes then
-        Error.raise
-          (Error.Runtime_unavailable
-             (Printf.sprintf
-                "unexpected output size: got %d bytes, expected %d for %s"
-                (String.length data) expected_bytes desc.dtype));
       let kind = Nx_core.Dtype.to_buffer_kind dtype in
-      let buffer = Nx_buffer.create kind expected_elems in
-      Nx_buffer.blit_from_bytes (Bytes.unsafe_of_string data) buffer;
+      let buffer = Nx_buffer.create kind numel in
       Trace.Tensor (Nx.of_buffer buffer ~shape)
 
-let execute compiled inputs =
-  let handlers = Ir.ffi_handlers compiled.program in
-  if handlers <> [] && compiled.backend <> `Cuda then
-    Error.raise
-      (Error.Unsupported_program
-         "typed PJRT FFI custom calls currently require the CUDA backend");
+let ensure_ffi_registered compiled =
   if not compiled.ffi_registered then (
+    let handlers = Ir.ffi_handlers compiled.program in
+    if handlers <> [] && compiled.backend <> `Cuda then
+      Error.raise
+        (Error.Unsupported_program
+           "typed PJRT FFI custom calls currently require the CUDA backend");
     List.iter
       (fun (handler : Ir.ffi_handler) ->
         let identity =
@@ -725,12 +756,14 @@ let execute compiled inputs =
                   "FFI library %S changed after tracing; retrace with an \
                    immutable or content-addressed artifact"
                   handler.library));
-        native_register_ffi_handler ~plugin_path:(plugin_path compiled.backend)
-          ~library_path:identity.library
-          ~library_digest:identity.library_digest ~symbol:handler.symbol
-          ~target:handler.target)
+        native_register_ffi_handler
+          ~plugin_path:compiled.plugin_path
+          ~library_path:identity.library ~library_digest:identity.library_digest
+          ~symbol:handler.symbol ~target:handler.target)
       handlers;
-    compiled.ffi_registered <- true);
+    compiled.ffi_registered <- true)
+
+let constant_input_metadata compiled =
   let constant_input_dtypes =
     List.map (fun ((desc : Ir.desc), _) -> desc.dtype) compiled.extra_inputs
   in
@@ -740,38 +773,181 @@ let execute compiled inputs =
       compiled.extra_inputs
   in
   let constant_input_data = List.map snd compiled.extra_inputs in
-  let dynamic_input_dtypes =
-    Array.of_list
-      (List.map (fun tensor -> Nx_core.Dtype.to_string (Nx.dtype tensor)) inputs)
-  in
-  let dynamic_input_shapes =
-    Array.of_list
-      (List.map (fun tensor -> Nx.shape tensor) inputs)
-  in
-  let dynamic_input_data =
-    Array.of_list
-      (List.map (fun tensor -> tensor_data_string (Nx.dtype tensor) tensor) inputs)
-  in
-  let constant_input_dtypes = Array.of_list constant_input_dtypes in
-  let constant_input_shapes = Array.of_list constant_input_shapes in
-  let constant_input_data = Array.of_list constant_input_data in
+  ( Array.of_list constant_input_dtypes,
+    Array.of_list constant_input_shapes,
+    Array.of_list constant_input_data )
+
+let output_metadata compiled =
   let output_dtypes =
-    Array.of_list (List.map (fun (desc : Ir.desc) -> desc.dtype) compiled.output_descs)
+    Array.of_list
+      (List.map (fun (desc : Ir.desc) -> desc.dtype) compiled.output_descs)
   in
   let output_shapes =
     Array.of_list
-      (List.map (fun (desc : Ir.desc) -> Array.copy desc.shape) compiled.output_descs)
+      (List.map
+         (fun (desc : Ir.desc) -> Array.copy desc.shape)
+         compiled.output_descs)
   in
-  let outputs =
-    native_execute ~plugin_path:(plugin_path compiled.backend)
+  (output_dtypes, output_shapes)
+
+let execute compiled inputs =
+  ensure_ffi_registered compiled;
+  let constant_input_dtypes, constant_input_shapes, constant_input_data =
+    constant_input_metadata compiled
+  in
+  let dynamic_input_dtypes =
+    Array.of_list
+      (List.map
+         (fun tensor -> Nx_core.Dtype.to_string (Nx.dtype tensor))
+         inputs)
+  in
+  let dynamic_input_shapes =
+    Array.of_list (List.map (fun tensor -> Nx.shape tensor) inputs)
+  in
+  let inputs = List.map Nx.contiguous inputs in
+  let dynamic_input_data =
+    Array.of_list (List.map (fun tensor -> Obj.repr (Nx.data tensor)) inputs)
+  in
+  let output_dtypes, output_shapes = output_metadata compiled in
+  let outputs = List.map tensor_of_output compiled.output_descs in
+  let output_data =
+    Array.of_list
+      (List.map
+         (fun (Trace.Tensor tensor) -> Obj.repr (Nx.data tensor))
+         outputs)
+  in
+  native_execute
+    ~plugin_path:compiled.plugin_path
+    ~cache_key:compiled.cache_key ~device_id:compiled.device_id
+    ~stablehlo:compiled.module_text ~dynamic_input_dtypes ~dynamic_input_shapes
+    ~dynamic_input_data ~constant_input_dtypes ~constant_input_shapes
+    ~constant_input_data ~output_dtypes ~output_shapes ~output_data;
+  outputs
+
+let device_buffer_of_host ~backend ~device_id tensor =
+  let tensor = Nx.contiguous tensor in
+  let dtype = Nx.dtype tensor in
+  let shape = Nx.shape tensor in
+  let native =
+    native_buffer_of_host ~plugin_path:(plugin_path backend) ~device_id
+      ~dtype:(Nx_core.Dtype.to_string dtype)
+      ~shape
+      ~data:(Obj.repr (Nx.data tensor))
+  in
+  { native; backend; device_id; dtype; shape = Array.copy shape }
+
+let device_buffer_to_host buffer =
+  let shape = Array.copy buffer.shape in
+  let numel = Array.fold_left ( * ) 1 shape in
+  let kind = Nx_core.Dtype.to_buffer_kind buffer.dtype in
+  let data = Nx_buffer.create kind numel in
+  native_buffer_to_host buffer.native
+    ~dtype:(Nx_core.Dtype.to_string buffer.dtype)
+    ~shape ~data:(Obj.repr data);
+  Nx.of_buffer data ~shape
+
+let device_buffer_await buffer = native_buffer_await buffer.native
+let device_buffer_shape buffer = Array.copy buffer.shape
+let device_buffer_dtype buffer = buffer.dtype
+
+let device_buffer_placeholder buffer =
+  let scalar = Nx.scalar buffer.dtype (Nx_core.Dtype.zero buffer.dtype) in
+  Nx.broadcast_to buffer.shape scalar
+
+let device_buffers_match_signature signature inputs =
+  let rec loop expected actual =
+    match (expected, actual) with
+    | [], [] -> true
+    | [], _ :: _ | _ :: _, [] -> false
+    | (spec : Signature.tensor) :: expected, Device_buffer buffer :: actual ->
+        buffer.backend = signature.Signature.backend
+        && buffer.device_id = signature.device_id
+        && Nx_core.Dtype.to_string buffer.dtype = spec.dtype
+        && Array.equal Int.equal buffer.shape spec.shape
+        && loop expected actual
+  in
+  loop signature.inputs inputs
+
+let validate_device_inputs compiled inputs =
+  let rec loop index expected actual =
+    match (expected, actual) with
+    | [], [] -> ()
+    | [], _ :: _ | _ :: _, [] ->
+        invalid_arg
+          (Printf.sprintf
+             "Rune_pjrt: compiled function expects %d device inputs, got %d"
+             (List.length compiled.signature.inputs)
+             (List.length inputs))
+    | (spec : Signature.tensor) :: expected, Device_buffer buffer :: actual ->
+        if
+          buffer.backend <> compiled.backend
+          || buffer.device_id <> compiled.device_id
+        then
+          invalid_arg
+            (Printf.sprintf
+               "Rune_pjrt: device input %d belongs to %s:%d, expected %s:%d"
+               index
+               (Backend.to_string buffer.backend)
+               buffer.device_id
+               (Backend.to_string compiled.backend)
+               compiled.device_id);
+        let dtype = Nx_core.Dtype.to_string buffer.dtype in
+        if dtype <> spec.dtype then
+          invalid_arg
+            (Printf.sprintf
+               "Rune_pjrt: device input %d has dtype %s, expected %s" index
+               dtype spec.dtype);
+        if not (Array.equal Int.equal buffer.shape spec.shape) then
+          invalid_arg
+            (Printf.sprintf
+               "Rune_pjrt: device input %d has shape %s, expected %s" index
+               (Nx_core.Shape.to_string buffer.shape)
+               (Nx_core.Shape.to_string spec.shape));
+        loop (index + 1) expected actual
+  in
+  loop 0 compiled.signature.inputs inputs
+
+let packed_device_buffer_of_native (compiled : compiled) (desc : Ir.desc) native
+    =
+  match Nx_core.Dtype.Packed.of_string desc.dtype with
+  | None ->
+      Error.raise
+        (Error.Runtime_unavailable
+           (Printf.sprintf "unknown dtype in output descriptor: %s" desc.dtype))
+  | Some (Nx_core.Dtype.Pack dtype) ->
+      Device_buffer
+        {
+          native;
+          backend = compiled.backend;
+          device_id = compiled.device_id;
+          dtype;
+          shape = Array.copy desc.shape;
+        }
+
+let execute_device compiled inputs =
+  ensure_ffi_registered compiled;
+  validate_device_inputs compiled inputs;
+  let dynamic_input_buffers =
+    Array.of_list
+      (List.map (fun (Device_buffer buffer) -> buffer.native) inputs)
+  in
+  let constant_input_dtypes, constant_input_shapes, constant_input_data =
+    constant_input_metadata compiled
+  in
+  let output_dtypes, output_shapes = output_metadata compiled in
+  let native_outputs =
+    native_execute_device
+      ~plugin_path:compiled.plugin_path
       ~cache_key:compiled.cache_key ~device_id:compiled.device_id
-      ~stablehlo:compiled.module_text ~dynamic_input_dtypes ~dynamic_input_shapes
-      ~dynamic_input_data ~constant_input_dtypes ~constant_input_shapes
-      ~constant_input_data ~output_dtypes ~output_shapes
+      ~stablehlo:compiled.module_text ~dynamic_input_buffers
+      ~constant_input_dtypes ~constant_input_shapes ~constant_input_data
+      ~output_dtypes ~output_shapes
   in
-  if Array.length outputs <> List.length compiled.output_descs then
-    Error.raise
-      (Error.Runtime_unavailable
-         (Printf.sprintf "runtime returned %d outputs, expected %d"
-            (Array.length outputs) (List.length compiled.output_descs)));
-  List.mapi (fun i desc -> tensor_of_output desc outputs.(i)) compiled.output_descs
+  let output_descs = Array.of_list compiled.output_descs in
+  if Array.length native_outputs <> Array.length output_descs then
+    failwith "Rune_pjrt: PJRT returned the wrong number of device buffers";
+  Array.mapi
+    (fun index native ->
+      packed_device_buffer_of_native compiled output_descs.(index) native)
+    native_outputs
+  |> Array.to_list
