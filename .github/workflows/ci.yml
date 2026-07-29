@@ -1,76 +1,172 @@
-name: Build and test
+name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  OPAMYES: "true"
+  RUNE_PJRT_AUTO_FETCH: "false"
+  RUNE_PJRT_TEST_SKIP_CUDA: "1"
 
 jobs:
-  build:
+  quality:
+    name: Formatting, manifests, and scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v6
+
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.3"
+          opam-pin: false
+
+      - name: Install quality tools
+        run: opam install dune.3.21.1 ocamlformat.0.29.0
+
+      - name: Check formatting
+        run: opam exec -- dune build @fmt
+
+      - name: Lint opam manifests
+        run: opam lint opam/*.opam dev/rune-pjrt/*.opam packages/nx-oxcaml/*.opam
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check Python CI helpers
+        run: |
+          python -m pip install ruff
+          ruff check .github/modal dev/rune-pjrt/scripts/fetch_jax_plugin.py
+          python -m compileall -q .github/modal dev/rune-pjrt/scripts
+
+  unit:
+    name: Unit tests (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          # - windows-latest
-
-    runs-on: ${{ matrix.os }}
-
+        include:
+          - name: Linux, minimum workspace OCaml
+            os: ubuntu-latest
+            compiler: "5.4"
+          - name: Linux, current OCaml
+            os: ubuntu-latest
+            compiler: "5"
+          - name: macOS, current OCaml
+            os: macos-latest
+            compiler: "5"
     steps:
       - name: Checkout tree
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Set-up OCaml
+      - name: Set up OCaml
         uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: 5
+          ocaml-compiler: ${{ matrix.compiler }}
+          opam-pin: false
+          dune-cache: true
 
       - name: Install dependencies
-        run: opam install . --deps-only --with-test
+        run: .github/ci/install-dependencies.sh
 
-      - name: Build and test nx
-        run: |
-          opam exec -- dune build --release packages/nx
-          opam exec -- dune build --release @packages/nx/runtest
+      - name: Build libraries and install artifacts
+        run: opam exec -- dune build @install
 
-      - name: Build and test brot
-        run: |
-          opam exec -- dune build --release packages/brot
-          opam exec -- dune build --release @packages/brot/runtest
+      - name: Run unit tests
+        run: opam exec -- dune runtest
 
-      - name: Build and test talon
-        run: |
-          opam exec -- dune build --release packages/talon
-          opam exec -- dune build --release @packages/talon/runtest
+  end-to-end:
+    name: End-to-end release smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v6
 
-      - name: Build and test rune
-        run: |
-          opam exec -- dune build --release packages/rune
-          opam exec -- dune build --release @packages/rune/runtest
+      - name: Set up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5"
+          opam-pin: false
+          dune-cache: true
 
-      - name: Build and test kaun
-        run: |
-          opam exec -- dune build --release packages/kaun
-          opam exec -- dune build --release @packages/kaun/runtest
+      - name: Install dependencies
+        run: .github/ci/install-dependencies.sh
 
-      - name: Build and test fehu
-        run: |
-          opam exec -- dune build --release packages/fehu
-          opam exec -- dune build --release @packages/fehu/runtest
+      - name: Test the publishable source tree
+        run: .github/ci/end-to-end.sh
 
-      - name: Build and test sowilo
-        run: |
-          opam exec -- dune build --release packages/sowilo
-          opam exec -- dune build --release @packages/sowilo/runtest
+  oxcaml:
+    name: Nx OxCaml
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v6
 
-      - name: Build and test hugin
-        run: |
-          opam exec -- dune build --release packages/hugin
-          opam exec -- dune build --release @packages/hugin/runtest
+      - name: Set up OxCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ocaml-variants.5.2.0+ox
+          opam-repositories: |
+            oxcaml: git+https://github.com/oxcaml/opam-repository.git
+            default: git+https://github.com/ocaml/opam-repository.git
+          opam-pin: false
 
-      - name: Build and test quill
+      - name: Install pinned build tools
         run: |
-          opam exec -- dune build --release packages/quill
-          opam exec -- dune build --release @packages/quill/runtest
+          opam pin add ocamlfind git+https://github.com/nirnayroy/ocamlfind --no-action
+          opam pin add ocamlbuild git+https://github.com/Sudha247/ocamlbuild#oxcaml+dune --no-action
+          opam pin add nx . --no-action
+
+      - name: Install dependencies
+        run: opam install packages/nx-oxcaml/nx-oxcaml.opam --deps-only --with-test
+
+      - name: Build and test
+        working-directory: packages/nx-oxcaml
+        run: |
+          opam exec -- dune build --root . @install
+          opam exec -- dune runtest --root .
+
+  cuda:
+    name: CUDA unit and end-to-end tests (Modal)
+    needs: quality
+    if: >-
+      vars.MODAL_CI_ENABLED == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Modal
+        run: python -m pip install "modal>=1.4,<2"
+
+      - name: Run CUDA tests on Modal
+        run: modal run .github/modal/cuda_ci.py
