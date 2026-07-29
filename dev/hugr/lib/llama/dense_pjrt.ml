@@ -11,8 +11,7 @@ type 'layout t = {
   device_id : int;
   execute : Rune_pjrt.packed list -> Rune_pjrt.packed list;
   execute_device :
-    Rune_pjrt.Device_buffer.packed list ->
-    Rune_pjrt.Device_buffer.packed list;
+    Rune_pjrt.Device_buffer.packed list -> Rune_pjrt.Device_buffer.packed list;
   true_masks :
     (int * int, (bool, Nx.bool_elt) Rune_pjrt.Device_buffer.t) Hashtbl.t;
 }
@@ -32,8 +31,7 @@ let unpack (type a b) (dtype : (a, b) Nx.dtype) ~name = function
 let unpack_device (type a b) (dtype : (a, b) Nx.dtype) ~name = function
   | Rune_pjrt.Device_buffer.Pack buffer -> (
       match
-        Nx_core.Dtype.equal_witness dtype
-          (Rune_pjrt.Device_buffer.dtype buffer)
+        Nx_core.Dtype.equal_witness dtype (Rune_pjrt.Device_buffer.dtype buffer)
       with
       | Some Type.Equal -> (buffer : (a, b) Rune_pjrt.Device_buffer.t)
       | None ->
@@ -57,9 +55,7 @@ let compile ?(device_id = 0) ~layer_count ~dtype forward =
     let valid = unpack Nx.bool ~name:"valid" inputs.(3) in
     let keys =
       Array.init layer_count (fun index ->
-          unpack dtype
-            ~name:(Printf.sprintf "keys.%d" index)
-            inputs.(4 + index))
+          unpack dtype ~name:(Printf.sprintf "keys.%d" index) inputs.(4 + index))
     in
     let values =
       Array.init layer_count (fun index ->
@@ -185,11 +181,9 @@ let resident_length cache = cache.length
 let resident_of_host runner cache =
   if Array.length cache.Dense_cache.keys <> runner.layer_count then
     invalid_argf "Dense_pjrt.Resident.of_host: expected %d key caches, got %d"
-      runner.layer_count
-      (Array.length cache.keys);
+      runner.layer_count (Array.length cache.keys);
   if Array.length cache.values <> runner.layer_count then
-    invalid_argf
-      "Dense_pjrt.Resident.of_host: expected %d value caches, got %d"
+    invalid_argf "Dense_pjrt.Resident.of_host: expected %d value caches, got %d"
       runner.layer_count
       (Array.length cache.values);
   let upload tensor =
@@ -210,21 +204,20 @@ let resident_prefill runner cache ?attention_mask input_ids =
   let shape = Nx.shape input_ids in
   if Array.length shape <> 2 then
     invalid_argf
-      "Dense_pjrt.Resident.prefill: expected input IDs with shape [batch; seq], \
-       got [%s]"
+      "Dense_pjrt.Resident.prefill: expected input IDs with shape [batch; \
+       seq], got [%s]"
       (String.concat "; " (List.map string_of_int (Array.to_list shape)));
   let batch = shape.(0) in
   let seq = shape.(1) in
   if batch <> cache.batch_size then
-    invalid_argf
-      "Dense_pjrt.Resident.prefill: expected batch size %d, got %d"
+    invalid_argf "Dense_pjrt.Resident.prefill: expected batch size %d, got %d"
       cache.batch_size batch;
   if seq <= 0 then
     invalid_argf "Dense_pjrt.Resident.prefill: sequence length must be positive";
   if cache.length + seq > cache.max_length then
     invalid_argf
-      "Dense_pjrt.Resident.prefill: cache capacity %d exceeded by position %d + \
-       %d"
+      "Dense_pjrt.Resident.prefill: cache capacity %d exceeded by position %d \
+       + %d"
       cache.max_length cache.length seq;
   let upload tensor =
     Rune_pjrt.Device_buffer.of_host ~backend:`Cuda ~device_id:runner.device_id
@@ -249,8 +242,9 @@ let resident_prefill runner cache ?attention_mask input_ids =
         upload mask
   in
   let inputs =
-    pack_device (upload input_ids) :: pack_device attention_mask
-    :: pack_device cache.position :: pack_device cache.valid
+    pack_device (upload input_ids)
+    :: pack_device attention_mask :: pack_device cache.position
+    :: pack_device cache.valid
     :: (Array.to_list cache.keys |> List.map pack_device)
     @ (Array.to_list cache.values |> List.map pack_device)
   in
@@ -278,14 +272,7 @@ let resident_prefill runner cache ?attention_mask input_ids =
           outputs.(3 + runner.layer_count + index))
   in
   ( logits,
-    {
-      cache with
-      keys;
-      values;
-      valid;
-      position;
-      length = cache.length + seq;
-    } )
+    { cache with keys; values; valid; position; length = cache.length + seq } )
 
 let resident_decode_step runner cache input_ids =
   let shape = Nx.shape input_ids in

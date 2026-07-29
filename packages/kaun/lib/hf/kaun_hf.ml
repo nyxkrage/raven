@@ -342,24 +342,19 @@ let update_ref ~storage ~revision ~commit_hash =
 
 (* Xet download *)
 
-let xet_available () =
-  try
-    ignore (Xet.version ());
-    true
-  with Failure _ | Invalid_argument _ -> false
-
 let download_file_via_xet ?token ?(revision = Main) ~model_id ~filename
     ~destination () =
-  Xet.download_hf_file ?token
-    ~repo_id:model_id ~filename
-    ~revision:(revision_string revision)
-    ~destination ~repo_type:Model ()
+  Kaun_hf_xet.download_hf_file ?token ~model_id ~filename
+    ~revision:(revision_string revision) ~destination ()
 
 let try_xet_download ?token ~revision ~model_id ~filename ~destination () =
-  if not (xet_available ()) then None
+  if not (Kaun_hf_xet.available ()) then None
   else
     try
-      let _json = download_file_via_xet ?token ~revision ~model_id ~filename ~destination () in
+      let _json =
+        download_file_via_xet ?token ~revision ~model_id ~filename ~destination
+          ()
+      in
       if Sys.file_exists destination then Some destination else None
     with Failure _ -> None
 
@@ -380,7 +375,10 @@ let download_file ?token ?cache_dir ?offline ?(revision = Main) ~model_id
       let xet_destination =
         snapshot_path ~storage ~commit_hash:"xet" ~filename
       in
-      match try_xet_download ?token ~revision ~model_id ~filename ~destination:xet_destination () with
+      match
+        try_xet_download ?token ~revision ~model_id ~filename
+          ~destination:xet_destination ()
+      with
       | Some path -> path
       | None -> begin
           let url = hub_url ~model_id ~revision ~filename in

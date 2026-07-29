@@ -33,9 +33,16 @@
  (package tolk)
  (libraries unix tolk tolk.ir windtrap))
 
-(tests
- (names test_runtime_metal)
- (package tolk)
+(executable
+ (name test_runtime_metal)
+ (optional)
  (enabled_if
   (= %{system} macosx))
  (libraries tolk tolk_ir tolk.metal windtrap))
+
+(rule
+ (alias runtest)
+ (enabled_if
+  (= %{system} macosx))
+ (action
+  (run ./test_runtime_metal.exe)))

@@ -5,8 +5,13 @@
  (libraries brot thumper unix))
 
 (rule
- (alias runtest)
+ (alias bench)
+ (deps
+  (source_tree data))
  (action
-  (progn
-   (run %{exe:bench_brot.exe} -q)
-   (diff? brot.thumper brot.thumper.corrected))))
+  (setenv
+   RAVEN_BENCH_DATA_DIR
+   %{workspace_root}/packages/brot/bench/data
+   (progn
+    (run %{exe:bench_brot.exe} -q)
+    (diff? brot.thumper brot.thumper.corrected)))))

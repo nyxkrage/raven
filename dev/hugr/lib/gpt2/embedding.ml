@@ -7,7 +7,8 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 let token_position ~vocab_size ~max_positions ~embed_dim ?(dropout = 0.0) () =
   if dropout < 0.0 || dropout >= 1.0 then
-    invalid_argf "Gpt2.Embedding.token_position: expected 0.0 <= dropout < 1.0, got %g"
+    invalid_argf
+      "Gpt2.Embedding.token_position: expected 0.0 <= dropout < 1.0, got %g"
       dropout;
   let weight_init = Kaun.Init.normal ~stddev:0.02 () in
   {

@@ -6,6 +6,7 @@
 
 (package
  (name xet)
+ (allow_empty)
  (synopsis "Experimental OCaml bindings for Hugging Face Xet")
  (description
   "Xet is an experimental OCaml wrapper around huggingface/xet-core for chunk-based hashing, deduplication, upload, and download infrastructure.")

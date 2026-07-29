@@ -1,4 +1,6 @@
 (executable
  (name generate)
  (modules generate api site)
+ (enabled_if
+  (= %{env:RAVEN_BUILD_WEBSITE=false} true))
  (libraries cmarkit hilite hilite.markdown unix))

@@ -1,17 +1,2 @@
-; Dev: rebuild dist from sources and promote to source tree
-
-(rule
- (targets
-  (dir dist))
- (enabled_if
-  (= %{profile} dev))
- (deps
-  (glob_files src/*.js)
-  (glob_files css/*.css)
-  (glob_files fonts/*.woff2)
-  esbuild.config.mjs
-  (source_tree node_modules))
- (mode
-  (promote (until-clean)))
- (action
-  (bash "node esbuild.config.mjs --production 2>&1")))
+; The server embeds the committed dist assets. Regenerate them explicitly with
+; `npm ci && npm run build` when the frontend changes.

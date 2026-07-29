@@ -1,3 +1,13 @@
-(test
+(executable
  (name test_xet)
+ (optional)
+ (enabled_if
+  (= %{env:RAVEN_BUILD_XET=false} true))
  (libraries xet unix))
+
+(rule
+ (alias runtest)
+ (enabled_if
+  (= %{env:RAVEN_BUILD_XET=false} true))
+ (action
+  (run ./test_xet.exe)))

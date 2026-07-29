@@ -15,10 +15,9 @@ let backend_of_env () =
   | Some "cpu" -> `Cpu
   | Some "cuda" | Some "gpu" -> `Cuda
   | Some backend ->
-      invalid_argf
-        "RUNE_PJRT_BACKEND=%S is invalid, expected cpu or cuda" backend
-  | None ->
-      if Rune_pjrt.backend_available `Cuda then `Cuda else `Cpu
+      invalid_argf "RUNE_PJRT_BACKEND=%S is invalid, expected cpu or cuda"
+        backend
+  | None -> if Rune_pjrt.backend_available `Cuda then `Cuda else `Cpu
 
 let int_of_env name ~default =
   match Sys.getenv_opt name with
@@ -85,7 +84,9 @@ let () =
   let backend = backend_of_env () in
   let warmup = int_of_env "RUNE_PJRT_BENCH_WARMUP" ~default:1 in
   let iterations = int_of_env "RUNE_PJRT_BENCH_ITERS" ~default:1 in
-  let prompt_tokens = int_of_env "RUNE_PJRT_BENCH_PROMPT_TOKENS" ~default:2048 in
+  let prompt_tokens =
+    int_of_env "RUNE_PJRT_BENCH_PROMPT_TOKENS" ~default:2048
+  in
   let max_tokens = int_of_env "RUNE_PJRT_BENCH_MAX_TOKENS" ~default:512 in
   if not (Rune_pjrt.backend_available backend) then
     invalid_argf "PJRT %s backend is unavailable (%s)"
@@ -95,12 +96,12 @@ let () =
   let cfg, params = Gpt2.from_pretrained ~model_id () in
   let max_seq = prompt_tokens + max_tokens in
   let prompt_position_ids =
-    Gpt2_bench_support.wrapped_position_ids ~n_positions:cfg.n_positions ~batch:1
-      ~seq:prompt_tokens
+    Gpt2_bench_support.wrapped_position_ids ~n_positions:cfg.n_positions
+      ~batch:1 ~seq:prompt_tokens
   in
   let generate_position_ids =
-    Gpt2_bench_support.wrapped_position_ids ~n_positions:cfg.n_positions ~batch:1
-      ~seq:max_seq
+    Gpt2_bench_support.wrapped_position_ids ~n_positions:cfg.n_positions
+      ~batch:1 ~seq:max_seq
   in
   let forward_prompt input_ids =
     Gpt2_bench_support.forward_with_position_ids ~cfg ~params ~dtype
@@ -123,12 +124,17 @@ let () =
     Gpt2_bench_support.make_prompt_ids ~vocab_size:cfg.vocab_size ~prompt_tokens
   in
   let input_ids = Nx.create Nx.int32 [| 1; prompt_tokens |] prompt_ids in
-  let prefill_stats, _, prefill_token = bench ~warmup ~iterations prefill input_ids in
-  let decode_stats, _, generated = bench ~warmup ~iterations generate input_ids in
+  let prefill_stats, _, prefill_token =
+    bench ~warmup ~iterations prefill input_ids
+  in
+  let decode_stats, _, generated =
+    bench ~warmup ~iterations generate input_ids
+  in
   let generated_ids = Nx.to_array generated in
   let prefill_token : int = Nx.item [] prefill_token |> Int32.to_int in
   let tail_sum =
-    Array.sub generated_ids prompt_tokens (Array.length generated_ids - prompt_tokens)
+    Array.sub generated_ids prompt_tokens
+      (Array.length generated_ids - prompt_tokens)
     |> Array.fold_left (fun acc id -> acc + Int32.to_int id) 0
   in
   let prefill_tokens_per_s =
@@ -138,22 +144,7 @@ let () =
     float_of_int max_tokens /. (decode_stats.mean_ms /. 1000.0)
   in
   Printf.printf
-    "{\
-     \"backend\":\"%s\",\
-     \"model_id\":\"%s\",\
-     \"prompt_tokens\":%d,\
-     \"max_tokens\":%d,\
-     \"max_seq\":%d,\
-     \"position_mode\":\"wrapped_mod_n_positions\",\
-     \"warmup\":%d,\
-     \"iterations\":%d,\
-     %s,\
-     %s,\
-     \"prefill_token\":%d,\
-     \"prefill_tokens_per_s\":%.6f,\
-     \"decode_tokens_per_s\":%.6f,\
-     \"generated_tail_sum\":%d\
-     }\n"
+    "{\"backend\":\"%s\",\"model_id\":\"%s\",\"prompt_tokens\":%d,\"max_tokens\":%d,\"max_seq\":%d,\"position_mode\":\"wrapped_mod_n_positions\",\"warmup\":%d,\"iterations\":%d,%s,%s,\"prefill_token\":%d,\"prefill_tokens_per_s\":%.6f,\"decode_tokens_per_s\":%.6f,\"generated_tail_sum\":%d}\n"
     (Rune_pjrt.Backend.to_string backend)
     model_id prompt_tokens max_tokens max_seq warmup iterations
     (stats_to_json "prefill" prefill_stats)

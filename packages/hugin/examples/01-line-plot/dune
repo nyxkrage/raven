@@ -1,11 +1,3 @@
 (executable
  (name main)
  (libraries hugin nx))
-
-(rule
- (targets line_plot.png)
- (deps main.exe)
- (action
-  (run ./main.exe))
- (mode
-  (promote (until-clean))))

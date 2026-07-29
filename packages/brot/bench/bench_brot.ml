@@ -8,7 +8,10 @@
 open Brot
 
 module Fixtures = struct
-  let data_dir = Filename.concat (Sys.getcwd ()) "packages/brot/bench/data"
+  let data_dir =
+    match Sys.getenv_opt "RAVEN_BENCH_DATA_DIR" with
+    | Some path -> path
+    | None -> Filename.concat (Sys.getcwd ()) "packages/brot/bench/data"
 
   let read_file name =
     let path = Filename.concat data_dir name in

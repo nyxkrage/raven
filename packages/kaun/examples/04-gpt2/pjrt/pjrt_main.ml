@@ -26,10 +26,9 @@ let backend_of_env () =
   | Some "cpu" -> `Cpu
   | Some "cuda" | Some "gpu" -> `Cuda
   | Some backend ->
-      invalid_argf
-        "RUNE_PJRT_BACKEND=%S is invalid, expected one of: cpu, cuda" backend
-  | None ->
-      if Rune_pjrt.backend_available `Cuda then `Cuda else `Cpu
+      invalid_argf "RUNE_PJRT_BACKEND=%S is invalid, expected one of: cpu, cuda"
+        backend
+  | None -> if Rune_pjrt.backend_available `Cuda then `Cuda else `Cpu
 
 let int_of_env name ~default =
   match Sys.getenv_opt name with

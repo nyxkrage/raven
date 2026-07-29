@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 module Gpt2_attention = Attention
-
 open Kaun
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -26,15 +25,14 @@ let config = Config.make
 
 let embeddings cfg =
   Embedding.token_position ~vocab_size:cfg.vocab_size
-    ~max_positions:cfg.n_positions ~embed_dim:cfg.n_embd
-    ~dropout:cfg.embd_pdrop ()
+    ~max_positions:cfg.n_positions ~embed_dim:cfg.n_embd ~dropout:cfg.embd_pdrop
+    ()
 
 let final_norm cfg = Norm.layer_norm ~dim:cfg.n_embd ~eps:cfg.layer_norm_eps ()
 
 let decoder_block cfg () =
   if cfg.resid_pdrop < 0.0 || cfg.resid_pdrop >= 1.0 then
-    invalid_argf
-      "Gpt2.decoder_block: expected 0.0 <= resid_pdrop < 1.0, got %g"
+    invalid_argf "Gpt2.decoder_block: expected 0.0 <= resid_pdrop < 1.0, got %g"
       cfg.resid_pdrop;
   let ln1 = Norm.layer_norm ~dim:cfg.n_embd ~eps:cfg.layer_norm_eps () in
   let attention =
@@ -133,7 +131,9 @@ let decode (type l in_elt) ~(cfg : config) ~params ~state
   let root = Layer_util.fields ~ctx:"Gpt2.decode.params" params in
   let state_root = Layer_util.fields ~ctx:"Gpt2.decode.state" state in
   let get_param name = Layer_util.find ~ctx:"Gpt2.decode.params" name root in
-  let get_state name = Layer_util.find ~ctx:"Gpt2.decode.state" name state_root in
+  let get_state name =
+    Layer_util.find ~ctx:"Gpt2.decode.state" name state_root
+  in
 
   let embeddings_layer = embeddings cfg in
   let x, embeddings_state =
@@ -149,9 +149,8 @@ let decode (type l in_elt) ~(cfg : config) ~params ~state
     Ptree.List.items_exn ~ctx:"Gpt2.decode.state.layers" (get_state "layers")
   in
   if List.length layer_params <> cfg.n_layer then
-    invalid_argf
-      "Gpt2.decode: expected %d layer parameter sets, got %d" cfg.n_layer
-      (List.length layer_params);
+    invalid_argf "Gpt2.decode: expected %d layer parameter sets, got %d"
+      cfg.n_layer (List.length layer_params);
   if List.length layer_state <> cfg.n_layer then
     invalid_argf "Gpt2.decode: expected %d layer states, got %d" cfg.n_layer
       (List.length layer_state);
@@ -168,8 +167,8 @@ let decode (type l in_elt) ~(cfg : config) ~params ~state
 
   let ln_f = final_norm cfg in
   let y, ln_f_state =
-    ln_f.Layer.apply ~params:(get_param "ln_f") ~state:(get_state "ln_f")
-      ~dtype ~training ?ctx x
+    ln_f.Layer.apply ~params:(get_param "ln_f") ~state:(get_state "ln_f") ~dtype
+      ~training ?ctx x
   in
   let state =
     Ptree.dict
@@ -194,7 +193,9 @@ let for_causal_lm (cfg : config) () : (int32, float) Layer.t =
     Layer.init = (fun ~dtype -> init_decoder_params ~cfg ~dtype);
     apply =
       (fun ~params ~state ~dtype ~training ?ctx x ->
-        let hidden, state = decode ~cfg ~params ~state ~dtype ~training ?ctx x in
+        let hidden, state =
+          decode ~cfg ~params ~state ~dtype ~training ?ctx x
+        in
         let root = Layer_util.fields ~ctx:"Gpt2.lm_head.params" params in
         let embeddings =
           Layer_util.find ~ctx:"Gpt2.lm_head.params" "embeddings" root
@@ -258,8 +259,7 @@ let map_hf_weights ~cfg ~dtype hf_weights =
         ( "ln1",
           Ptree.dict
             [
-              ("gamma", hf_t (p "ln_1.weight"));
-              ("beta", hf_t (p "ln_1.bias"));
+              ("gamma", hf_t (p "ln_1.weight")); ("beta", hf_t (p "ln_1.bias"));
             ] );
         ( "attention",
           Ptree.dict
@@ -272,8 +272,7 @@ let map_hf_weights ~cfg ~dtype hf_weights =
         ( "ln2",
           Ptree.dict
             [
-              ("gamma", hf_t (p "ln_2.weight"));
-              ("beta", hf_t (p "ln_2.bias"));
+              ("gamma", hf_t (p "ln_2.weight")); ("beta", hf_t (p "ln_2.bias"));
             ] );
         ( "mlp",
           Ptree.dict
@@ -288,15 +287,11 @@ let map_hf_weights ~cfg ~dtype hf_weights =
   Ptree.dict
     [
       ( "embeddings",
-        Ptree.dict [ ("wte", hf_t "wte.weight"); ("wpe", hf_t "wpe.weight") ]
-      );
+        Ptree.dict [ ("wte", hf_t "wte.weight"); ("wpe", hf_t "wpe.weight") ] );
       ("layers", Ptree.list (List.init cfg.n_layer layer));
       ( "ln_f",
-        Ptree.dict
-          [
-            ("gamma", hf_t "ln_f.weight");
-            ("beta", hf_t "ln_f.bias");
-          ] );
+        Ptree.dict [ ("gamma", hf_t "ln_f.weight"); ("beta", hf_t "ln_f.bias") ]
+      );
     ]
 
 let from_pretrained ?(model_id = "gpt2") () =

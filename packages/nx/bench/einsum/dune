@@ -4,7 +4,7 @@
  (libraries nx thumper))
 
 (rule
- (alias runtest)
+ (alias bench)
  (action
   (progn
    (run %{exe:bench_einsum_nx.exe} -q)

@@ -19,6 +19,7 @@ dev-tools.locks/
 
 # Python virtual environment directory
 .venv/
+__pycache__/
 
 # Local benchmark outputs
 dev/rune-pjrt/bench/results-*.json

@@ -3,8 +3,13 @@
  (libraries sowilo nx.io nx thumper))
 
 (rule
- (alias runtest)
+ (alias bench)
+ (deps
+  (source_tree data))
  (action
-  (progn
-   (run %{exe:bench_sowilo.exe} -q)
-   (diff? sowilo.thumper sowilo.thumper.corrected))))
+  (setenv
+   RAVEN_BENCH_DATA_DIR
+   %{workspace_root}/packages/sowilo/bench/data
+   (progn
+    (run %{exe:bench_sowilo.exe} -q)
+    (diff? sowilo.thumper sowilo.thumper.corrected)))))

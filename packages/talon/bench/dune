@@ -3,8 +3,13 @@
  (libraries talon talon.csv thumper))
 
 (rule
- (alias runtest)
+ (alias bench)
+ (deps
+  (source_tree data))
  (action
-  (progn
-   (run %{exe:bench_talon.exe} -q)
-   (diff? talon.thumper talon.thumper.corrected))))
+  (setenv
+   RAVEN_BENCH_DATA_DIR
+   %{workspace_root}/packages/talon/bench/data
+   (progn
+    (run %{exe:bench_talon.exe} -q)
+    (diff? talon.thumper talon.thumper.corrected)))))

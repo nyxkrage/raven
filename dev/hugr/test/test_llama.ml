@@ -88,9 +88,7 @@ let test_causal_lm_shape_and_values () =
 
 let test_large_rope_theta_float16 () =
   Nx.Rng.run ~seed:43 @@ fun () ->
-  let model =
-    Llama.for_causal_lm (tiny ~rope_theta:500_000.0 ()) ()
-  in
+  let model = Llama.for_causal_lm (tiny ~rope_theta:500_000.0 ()) () in
   let vars = Layer.init model ~dtype:Nx.float16 in
   let logits, _ =
     Layer.apply model vars ~training:false (input [| 1; 2; 3; 4 |])
@@ -335,8 +333,7 @@ let test_resident_cached_pjrt_cuda () =
         (difference < 5e-4)
     with Rune_pjrt.Error.Error error ->
       failwith
-        ("LLaMA resident cached PJRT CUDA: "
-        ^ Rune_pjrt.Error.to_string error)
+        ("LLaMA resident cached PJRT CUDA: " ^ Rune_pjrt.Error.to_string error)
 
 let () =
   run "Hugr.Llama"

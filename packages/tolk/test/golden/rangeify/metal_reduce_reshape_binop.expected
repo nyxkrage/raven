@@ -1,8 +1,8 @@
 #include <metal_stdlib>
 using namespace metal;
 kernel void r_5_2_10n1(device float* data0_10, device float* data1_100, device float* data2_10, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
-  int gidx0 = gid.x; /* 5 */
   int lidx0 = lid.x; /* 2 */
+  int gidx0 = gid.x; /* 5 */
   int alu0 = (lidx0+(gidx0<<1));
   float val0 = (*(data1_100+alu0));
   float val1 = (*(data1_100+(alu0+10)));

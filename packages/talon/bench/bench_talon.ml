@@ -8,7 +8,10 @@
 module Row = Talon.Row
 
 module Fixtures = struct
-  let data_dir = Filename.concat (Sys.getcwd ()) "packages/talon/bench/data"
+  let data_dir =
+    match Sys.getenv_opt "RAVEN_BENCH_DATA_DIR" with
+    | Some path -> path
+    | None -> Filename.concat (Sys.getcwd ()) "packages/talon/bench/data"
 
   let load_csv name dtype_spec =
     Talon_csv.read ~dtype_spec (Filename.concat data_dir name)

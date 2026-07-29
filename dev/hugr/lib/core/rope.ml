@@ -35,8 +35,8 @@ let positions_from_context ~batch ~seq = function
                 (String.concat "; "
                    (List.map string_of_int (Array.to_list shape)))))
 
-let apply (type layout) ~theta ~rotary_dim ~positions
-    (x : (float, layout) Nx.t) : (float, layout) Nx.t =
+let apply (type layout) ~theta ~rotary_dim ~positions (x : (float, layout) Nx.t)
+    : (float, layout) Nx.t =
   if theta <= 0.0 then invalid_argf "Rope.apply: theta must be positive";
   let shape = Nx.shape x in
   if Array.length shape <> 4 then
@@ -54,17 +54,13 @@ let apply (type layout) ~theta ~rotary_dim ~positions
     invalid_argf "Rope.apply: positions must have shape [%d; %d]" batch seq;
   let dtype = Nx.dtype x in
   let half = rotary_dim / 2 in
-  let trig (type trig_layout)
-      (trig_dtype : (float, trig_layout) Nx.dtype) =
+  let trig (type trig_layout) (trig_dtype : (float, trig_layout) Nx.dtype) =
     let exponents =
-      Nx.arange_f trig_dtype 0.0 (float_of_int rotary_dim) 2.0
-      |> fun values ->
+      Nx.arange_f trig_dtype 0.0 (float_of_int rotary_dim) 2.0 |> fun values ->
       Nx.div values (Nx.scalar trig_dtype (float_of_int rotary_dim))
     in
     let inv_freq =
-      Nx.exp
-        (Nx.mul (Nx.neg exponents)
-           (Nx.log (Nx.scalar trig_dtype theta)))
+      Nx.exp (Nx.mul (Nx.neg exponents) (Nx.log (Nx.scalar trig_dtype theta)))
     in
     let positions = Nx.cast trig_dtype positions in
     let angles =

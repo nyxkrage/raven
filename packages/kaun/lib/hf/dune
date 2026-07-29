@@ -1,8 +1,21 @@
 (library
  (name kaun_hf)
  (public_name kaun.hf)
- (modules kaun_hf)
- (libraries unix rune nx nx.io kaun jsont jsont.bytesrw xet))
+ (modules kaun_hf kaun_hf_xet)
+ (private_modules kaun_hf_xet)
+ (libraries
+  unix
+  rune
+  nx
+  nx.io
+  kaun
+  jsont
+  jsont.bytesrw
+  (select
+   kaun_hf_xet.ml
+   from
+   (xet -> kaun_hf_xet_enabled.ml)
+   (!xet -> kaun_hf_xet_disabled.ml))))
 
 (test
  (name test_cache_layout)

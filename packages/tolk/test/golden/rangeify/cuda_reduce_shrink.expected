@@ -7,21 +7,17 @@ extern "C" __global__ void __launch_bounds__(16) r_16_16_2(float* data0_16, floa
   float acc1[1];
   int gidx0 = blockIdx.x; /* 16 */
   int lidx0 = threadIdx.x; /* 16 */
-  *(acc0+0) = 0.0f;
+  *(acc1+0) = 0.0f;
   for (int Ridx0 = 0; Ridx0 < 2; Ridx0++) {
     float val0 = (*(data1_1024+((lidx0<<1)+Ridx0+(gidx0<<5))));
-    *(acc0+0) = ((*(acc0+0))+val0);
+    *(acc1+0) = ((*(acc1+0))+val0);
   }
-  *(temp0+lidx0) = (*(acc0+0));
   __syncthreads();
-  *(acc1+0) = 0.0f;
+  *(temp0+lidx0) = (*(acc1+0));
+  *(acc0+0) = 0.0f;
   for (int Ridx102 = 0; Ridx102 < 16; Ridx102++) {
-    float val1 = (*(temp0+Ridx102));
-    *(acc1+0) = ((*(acc1+0))+val1);
+    *(acc0+0) = ((*(acc0+0))+(temp0+Ridx102));
   }
-  float val2 = (*(data2_16+gidx0));
-  bool alu8 = (lidx0==0);
-  if (alu8) {
-    *(data0_16+gidx0) = ((*(acc1+0))+val2);
-  }
+  float val1 = (*(data2_16+gidx0));
+  *(data0_16+gidx0) = ((*(acc0+0))+val1);
 }

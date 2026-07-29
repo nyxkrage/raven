@@ -7,7 +7,7 @@ publish = false
 
 [lib]
 name = "xet_ocaml_ffi"
-crate-type = ["staticlib"]
+crate-type = ["staticlib", "cdylib"]
 
 [dependencies]
 http = "1"

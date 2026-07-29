@@ -15,8 +15,7 @@ let mlp ~embed_dim ~hidden_dim () =
                  ( "up_weight",
                    Kaun.Ptree.tensor
                      (weight_init.f [| embed_dim; hidden_dim |] dtype) );
-                 ( "up_bias",
-                   Kaun.Ptree.tensor (Nx.zeros dtype [| hidden_dim |]) );
+                 ("up_bias", Kaun.Ptree.tensor (Nx.zeros dtype [| hidden_dim |]));
                  ( "down_weight",
                    Kaun.Ptree.tensor
                      (weight_init.f [| hidden_dim; embed_dim |] dtype) );
@@ -36,8 +35,6 @@ let mlp ~embed_dim ~hidden_dim () =
         let up_b = Layer_util.get fields ~name:"up_bias" dtype in
         let down_w = Layer_util.get fields ~name:"down_weight" dtype in
         let down_b = Layer_util.get fields ~name:"down_bias" dtype in
-        let y =
-          Nx.add (Nx.matmul x up_w) up_b |> Kaun.Activation.gelu_approx
-        in
+        let y = Nx.add (Nx.matmul x up_w) up_b |> Kaun.Activation.gelu_approx in
         (Nx.add (Nx.matmul y down_w) down_b, state));
   }

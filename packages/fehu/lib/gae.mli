@@ -20,14 +20,13 @@ val compute :
   gamma:float ->
   lambda:float ->
   float array * float array
-(** [compute ~rewards ~values ~terminated ~truncated ~next_values
-      ~gamma ~lambda] is [(advantages, returns)].
+(** [compute ~rewards ~values ~terminated ~truncated ~next_values ~gamma
+     ~lambda] is [(advantages, returns)].
 
-    [next_values.(t)] is V(s_{{t+1}}). When [terminated.(t)] is
-    [true], the bootstrap value is zero and the GAE trace resets.
-    When [truncated.(t)] is [true], the bootstrap value is
-    [next_values.(t)] and the trace resets for the new episode.
-    Otherwise, continuation uses the next step's value.
+    [next_values.(t)] is [V(s_(t+1))]. When [terminated.(t)] is [true], the
+    bootstrap value is zero and the GAE trace resets. When [truncated.(t)] is
+    [true], the bootstrap value is [next_values.(t)] and the trace resets for
+    the new episode. Otherwise, continuation uses the next step's value.
 
     Raises [Invalid_argument] if array lengths differ. *)
 

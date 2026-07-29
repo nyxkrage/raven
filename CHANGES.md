@@ -131,6 +131,8 @@ thread.
 
 ### Kaun
 
+- Allow `kaun.hf` to build without the experimental Xet package and use its
+  regular HTTP download path when Xet is unavailable.
 - Fix `Fn.rms_norm` gamma broadcasting across normalized axes, allowing
   `Layer.rms_norm` to process rank-3 sequence tensors correctly.
 - Optimizers extracted to the new Vega package. `Kaun.Optim` now delegates to

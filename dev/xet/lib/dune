@@ -1,29 +1,34 @@
 (library
  (name xet)
  (public_name xet)
+ (optional)
+ (enabled_if
+  (= %{env:RAVEN_BUILD_XET=false} true))
  (libraries unix)
  (foreign_archives xet_ocaml_ffi)
  (foreign_stubs
   (language c)
   (names xet_stubs))
  (c_library_flags
-  (:standard
-   -lpthread
-   -ldl
-   -lm)))
+  (:standard -lpthread -ldl -lm)))
 
 (rule
  (targets
   libxet_ocaml_ffi.a
+  dllxet_ocaml_ffi.so
   (dir cargo-target))
+ (enabled_if
+  (= %{env:RAVEN_BUILD_XET=false} true))
  (deps
   (source_tree ../rust)
   (source_tree ../../../vendor/xet-core))
  (action
   (progn
-   (chdir ../rust
+   (chdir
+    ../rust
     (setenv
      CARGO_TARGET_DIR
      ../lib/cargo-target
      (run cargo build --release --locked)))
-   (run cp cargo-target/release/libxet_ocaml_ffi.a libxet_ocaml_ffi.a))))
+   (run cp cargo-target/release/libxet_ocaml_ffi.a libxet_ocaml_ffi.a)
+   (run cp cargo-target/release/libxet_ocaml_ffi.so dllxet_ocaml_ffi.so))))

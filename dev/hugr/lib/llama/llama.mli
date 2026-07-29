@@ -148,8 +148,8 @@ module Pjrt : sig
       Nx.int32_t ->
       (float, 'layout) Nx.t * 'layout cache
     (** [prefill runner cache ?attention_mask input_ids] appends a prompt while
-        retaining the resulting cache on the CUDA device. Only inputs and
-        logits cross the host/device boundary. *)
+        retaining the resulting cache on the CUDA device. Only inputs and logits
+        cross the host/device boundary. *)
 
     val decode_step :
       'layout t ->

@@ -5,8 +5,7 @@ let get fs ~name dtype = Ptree.Dict.get_tensor_exn fs ~name dtype
 let find ~ctx key fs = Ptree.Dict.find_exn ~ctx key fs
 
 let wrapped_position_ids ~n_positions ~batch ~seq =
-  Array.init (batch * seq) (fun i ->
-      Int32.of_int ((i mod seq) mod n_positions))
+  Array.init (batch * seq) (fun i -> Int32.of_int (i mod seq mod n_positions))
   |> Nx.create Nx.int32 [| batch; seq |]
 
 let causal_self_attention (type l) ~(cfg : Gpt2.config)
@@ -90,8 +89,7 @@ let transformer_block (type l) ~(cfg : Gpt2.config)
 let forward_with_position_ids (type l) ~(cfg : Gpt2.config) ~params
     ~(dtype : (float, l) Nx.dtype) ~training
     ~(position_ids : (int32, Bigarray.int32_elt) Nx.t)
-    (input_ids : (int32, Bigarray.int32_elt) Nx.t) :
-    (float, l) Nx.t =
+    (input_ids : (int32, Bigarray.int32_elt) Nx.t) : (float, l) Nx.t =
   let input_ids = Nx.cast Nx.int32 input_ids in
   let shape = Nx.shape input_ids in
   let batch = shape.(0) in
