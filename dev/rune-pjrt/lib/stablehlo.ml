@@ -48,11 +48,36 @@ let tensor_type (desc : Ir.desc) =
         (String.concat "x" (List.map string_of_int dims))
         elt
 
+let floating_literal ~precision ~positive_infinity ~negative_infinity ~nan
+    value =
+  match Float.classify_float value with
+  | FP_infinite ->
+      if value < 0.0 then negative_infinity else positive_infinity
+  | FP_nan -> nan
+  | FP_normal | FP_subnormal | FP_zero ->
+      Printf.sprintf precision value
+
 let scalar_literal (type a b) (dtype : (a, b) Dtype.t) (value : a) =
   match dtype with
-  | Float16 | Float32 | BFloat16 | Float8_e4m3 | Float8_e5m2 ->
+  | Float16 ->
+      floating_literal ~precision:"%.9e" ~positive_infinity:"0x7C00"
+        ~negative_infinity:"0xFC00" ~nan:"0x7E00"
+        (Obj.magic value : float)
+  | BFloat16 ->
+      floating_literal ~precision:"%.9e" ~positive_infinity:"0x7F80"
+        ~negative_infinity:"0xFF80" ~nan:"0x7FC0"
+        (Obj.magic value : float)
+  | Float32 ->
+      floating_literal ~precision:"%.9e" ~positive_infinity:"0x7F800000"
+        ~negative_infinity:"0xFF800000" ~nan:"0x7FC00000"
+        (Obj.magic value : float)
+  | Float64 ->
+      floating_literal ~precision:"%.17e"
+        ~positive_infinity:"0x7FF0000000000000"
+        ~negative_infinity:"0xFFF0000000000000"
+        ~nan:"0x7FF8000000000000" (Obj.magic value : float)
+  | Float8_e4m3 | Float8_e5m2 ->
       Printf.sprintf "%.9e" (Obj.magic value : float)
-  | Float64 -> Printf.sprintf "%.17e" (Obj.magic value : float)
   | Int4 | UInt4 | Int8 | UInt8 | Int16 | UInt16 ->
       string_of_int (Obj.magic value : int)
   | Int32 | UInt32 -> Int32.to_string (Obj.magic value : int32)
@@ -216,7 +241,7 @@ let compare_direction = function
 
 let scalar_one_literal dtype =
   match dtype with
-  | "float16" -> "1"
+  | "float16" -> "1.000000e+00"
   | "float32" -> "1.000000e+00"
   | "float64" -> "1.0000000000000000e+00"
   | dtype ->

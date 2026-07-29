@@ -493,6 +493,15 @@ module Pjrt = struct
   let compile ?device_id cfg vars = compile_with_window ?device_id cfg vars
   let prefill = Dense_pjrt.prefill
   let decode_step = Dense_pjrt.decode_step
+
+  module Resident = struct
+    type 'layout cache = 'layout Dense_pjrt.resident
+
+    let of_host = Dense_pjrt.resident_of_host
+    let length = Dense_pjrt.resident_length
+    let prefill = Dense_pjrt.resident_prefill
+    let decode_step = Dense_pjrt.resident_decode_step
+  end
 end
 
 let map_hf_weights ~cfg ~dtype tensors =

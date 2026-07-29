@@ -1,0 +1,4 @@
+(executable
+ (name llama_profile)
+ (modules llama_profile)
+ (libraries hugr nx kaun rune-pjrt unix))

@@ -35,7 +35,8 @@ let positions_from_context ~batch ~seq = function
                 (String.concat "; "
                    (List.map string_of_int (Array.to_list shape)))))
 
-let apply ~theta ~rotary_dim ~positions x =
+let apply (type layout) ~theta ~rotary_dim ~positions
+    (x : (float, layout) Nx.t) : (float, layout) Nx.t =
   if theta <= 0.0 then invalid_argf "Rope.apply: theta must be positive";
   let shape = Nx.shape x in
   if Array.length shape <> 4 then
@@ -53,22 +54,30 @@ let apply ~theta ~rotary_dim ~positions x =
     invalid_argf "Rope.apply: positions must have shape [%d; %d]" batch seq;
   let dtype = Nx.dtype x in
   let half = rotary_dim / 2 in
-  let exponents = Nx.arange_f dtype 0.0 (float_of_int rotary_dim) 2.0 in
-  let exponents =
-    Nx.div exponents (Nx.scalar dtype (float_of_int rotary_dim))
+  let trig (type trig_layout)
+      (trig_dtype : (float, trig_layout) Nx.dtype) =
+    let exponents =
+      Nx.arange_f trig_dtype 0.0 (float_of_int rotary_dim) 2.0
+      |> fun values ->
+      Nx.div values (Nx.scalar trig_dtype (float_of_int rotary_dim))
+    in
+    let inv_freq =
+      Nx.exp
+        (Nx.mul (Nx.neg exponents)
+           (Nx.log (Nx.scalar trig_dtype theta)))
+    in
+    let positions = Nx.cast trig_dtype positions in
+    let angles =
+      Nx.mul
+        (Nx.reshape [| batch; seq; 1 |] positions)
+        (Nx.reshape [| 1; 1; half |] inv_freq)
+      |> Nx.expand_dims [ 1 ]
+    in
+    (Nx.cast dtype (Nx.cos angles), Nx.cast dtype (Nx.sin angles))
   in
-  let inv_freq =
-    Nx.exp (Nx.mul (Nx.neg exponents) (Nx.log (Nx.scalar dtype theta)))
+  let cos, sin =
+    match dtype with Nx.Float64 -> trig Nx.float64 | _ -> trig Nx.float32
   in
-  let positions = Nx.cast dtype positions in
-  let angles =
-    Nx.mul
-      (Nx.reshape [| batch; seq; 1 |] positions)
-      (Nx.reshape [| 1; 1; half |] inv_freq)
-    |> Nx.expand_dims [ 1 ]
-  in
-  let cos = Nx.cos angles in
-  let sin = Nx.sin angles in
   let x1 = Nx.slice [ Nx.A; Nx.A; Nx.A; Nx.R (0, half) ] x in
   let x2 = Nx.slice [ Nx.A; Nx.A; Nx.A; Nx.R (half, rotary_dim) ] x in
   let rotated =

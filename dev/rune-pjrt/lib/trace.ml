@@ -114,6 +114,37 @@ let backend_reduce op ~axes ~keepdims t_in =
 let backend_arg_reduce op ~axis ~keepdims t_in =
   T (op ~axis ~keepdims (unwrap t_in))
 
+let matmul_placeholder a b =
+  let a_shape = Nx.shape a in
+  let b_shape = Nx.shape b in
+  let a_rank = Array.length a_shape in
+  let b_rank = Array.length b_shape in
+  if a_rank < 2 || b_rank < 2 then
+    invalid_arg "Trace.matmul: expected operands with rank at least two";
+  if a_shape.(a_rank - 1) <> b_shape.(b_rank - 2) then
+    invalid_arg "Trace.matmul: contraction dimensions do not match";
+  let rank = Int.max a_rank b_rank in
+  let batch_rank = rank - 2 in
+  let batch_shape =
+    Array.init batch_rank (fun axis ->
+        let a_axis = axis - (rank - a_rank) in
+        let b_axis = axis - (rank - b_rank) in
+        let a_dim = if a_axis < 0 then 1 else a_shape.(a_axis) in
+        let b_dim = if b_axis < 0 then 1 else b_shape.(b_axis) in
+        if a_dim <> b_dim && a_dim <> 1 && b_dim <> 1 then
+          invalid_arg "Trace.matmul: batch dimensions do not broadcast";
+        Int.max a_dim b_dim)
+  in
+  let shape =
+    Array.append batch_shape [| a_shape.(a_rank - 2); b_shape.(b_rank - 1) |]
+  in
+  let a = unwrap a in
+  let dtype = Nx_backend.dtype a in
+  let scalar =
+    Nx_backend.full (Nx_backend.context a) dtype [||] (Dtype.zero dtype)
+  in
+  T (Nx_backend.expand scalar shape)
+
 let continue_binary env k backend_op ir_op a b =
   let result = backend_binary backend_op a b in
   binary_record env ir_op result a b;
@@ -468,7 +499,7 @@ let handler env =
         | E_matmul { a; b } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = T (Nx_backend.matmul (unwrap a) (unwrap b)) in
+                let result = matmul_placeholder a b in
                 let lhs = ensure_id env a in
                 let rhs = ensure_id env b in
                 ignore (bind_node env result (Ir.Matmul { lhs; rhs }));

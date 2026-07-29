@@ -129,6 +129,36 @@ module Pjrt : sig
     Nx.int32_t ->
     (float, 'layout) Nx.t * 'layout Cache.t
   (** [decode_step runner cache input_ids] appends one token using PJRT CUDA. *)
+
+  module Resident : sig
+    type 'layout cache
+    (** A request-owned key/value cache whose storage remains on the runner's
+        CUDA device between inference calls. *)
+
+    val of_host : 'layout t -> 'layout Cache.t -> 'layout cache
+    (** [of_host runner cache] uploads [cache] once to [runner]'s device. *)
+
+    val length : 'layout cache -> int
+    (** [length cache] is the number of positions appended so far. *)
+
+    val prefill :
+      'layout t ->
+      'layout cache ->
+      ?attention_mask:Nx.bool_t ->
+      Nx.int32_t ->
+      (float, 'layout) Nx.t * 'layout cache
+    (** [prefill runner cache ?attention_mask input_ids] appends a prompt while
+        retaining the resulting cache on the CUDA device. Only inputs and
+        logits cross the host/device boundary. *)
+
+    val decode_step :
+      'layout t ->
+      'layout cache ->
+      Nx.int32_t ->
+      (float, 'layout) Nx.t * 'layout cache
+    (** [decode_step runner cache input_ids] appends one token while retaining
+        the resulting cache on the CUDA device. *)
+  end
 end
 
 module Internal : sig

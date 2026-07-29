@@ -55,12 +55,19 @@ thread.
 
 ### Hugr
 
+- Add `Llama.Pjrt.Resident` for cached CUDA inference without round-tripping
+  key/value tensors through host memory, and evaluate low-precision RoPE angles
+  in float32 so large theta values such as Llama 3's 500,000 remain finite.
 - Add dense LLaMA, Mistral, Gemma 2, Gemma 3, and Falcon causal language models
   with Hugging Face loading and fixed-capacity KV caches for eager and PJRT CUDA
   prefill and decoding.
 
 ### Rune
 
+- Reduce PJRT JIT capture time for large matrix multiplications by tracing their
+  inferred shape instead of evaluating the operation eagerly on the CPU.
+- Fix PJRT StableHLO lowering for float16 reciprocal and non-finite constants,
+  enabling low-precision RMSNorm and masked attention graphs to compile.
 - Add `Rune_pjrt.Device_buffer`, `jit_device`, and their multi-tensor forms for
   asynchronous PJRT execution that keeps values on the device across compiled
   calls.

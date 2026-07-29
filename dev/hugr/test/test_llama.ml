@@ -10,10 +10,10 @@ module Ptree = Kaun.Ptree
 
 let dtype = Nx.float32
 
-let tiny ?(tie_word_embeddings = false) () =
+let tiny ?(tie_word_embeddings = false) ?(rope_theta = 10_000.0) () =
   Llama.config ~vocab_size:64 ~hidden_size:32 ~intermediate_size:48
     ~num_hidden_layers:2 ~num_attention_heads:4 ~num_key_value_heads:2
-    ~max_position_embeddings:32 ~tie_word_embeddings ()
+    ~max_position_embeddings:32 ~rope_theta ~tie_word_embeddings ()
 
 let input values =
   Array.map Int32.of_int values
@@ -85,6 +85,18 @@ let test_causal_lm_shape_and_values () =
   equal ~msg:"logit shape" (list int) [ 1; 4; 64 ]
     (Array.to_list (Nx.shape logits));
   is_false ~msg:"logits are finite" (Nx.item [] (Nx.any (Nx.isnan logits)))
+
+let test_large_rope_theta_float16 () =
+  Nx.Rng.run ~seed:43 @@ fun () ->
+  let model =
+    Llama.for_causal_lm (tiny ~rope_theta:500_000.0 ()) ()
+  in
+  let vars = Layer.init model ~dtype:Nx.float16 in
+  let logits, _ =
+    Layer.apply model vars ~training:false (input [| 1; 2; 3; 4 |])
+  in
+  is_true ~msg:"large-theta float16 logits are finite"
+    (Nx.item [] (Nx.all (Nx.isfinite logits)))
 
 let test_causal_mask () =
   Nx.Rng.run ~seed:7 @@ fun () ->
@@ -286,6 +298,46 @@ let test_cached_pjrt_cuda () =
     with Rune_pjrt.Error.Error error ->
       failwith ("LLaMA cached PJRT CUDA: " ^ Rune_pjrt.Error.to_string error)
 
+let test_resident_cached_pjrt_cuda () =
+  if Rune.Backend.available Pjrt_cuda then
+    try
+      Nx.Rng.run ~seed:41 @@ fun () ->
+      let cfg = tiny () in
+      let model = Llama.for_causal_lm cfg () in
+      let vars = Layer.init model ~dtype in
+      let ids = input [| 1; 2; 3; 4 |] in
+      let expected, _ = Layer.apply model vars ~training:false ids in
+      let runner = Llama.Pjrt.compile cfg vars in
+      let cache = Llama.Cache.create cfg ~batch_size:1 ~max_length:8 ~dtype in
+      let cache = Llama.Pjrt.Resident.of_host runner cache in
+      let prompt = Nx.slice [ Nx.A; Nx.R (0, 2) ] ids in
+      let prompt_logits, cache =
+        Llama.Pjrt.Resident.prefill runner cache prompt
+      in
+      let third = Nx.slice [ Nx.A; Nx.R (2, 3) ] ids in
+      let third_logits, cache =
+        Llama.Pjrt.Resident.decode_step runner cache third
+      in
+      let fourth = Nx.slice [ Nx.A; Nx.R (3, 4) ] ids in
+      let fourth_logits, cache =
+        Llama.Pjrt.Resident.decode_step runner cache fourth
+      in
+      let actual =
+        Nx.concatenate ~axis:1 [ prompt_logits; third_logits; fourth_logits ]
+      in
+      let difference = max_difference expected actual in
+      equal ~msg:"resident PJRT cache length" int 4
+        (Llama.Pjrt.Resident.length cache);
+      is_true
+        ~msg:
+          (Printf.sprintf "resident PJRT cached decode max error is %g"
+             difference)
+        (difference < 5e-4)
+    with Rune_pjrt.Error.Error error ->
+      failwith
+        ("LLaMA resident cached PJRT CUDA: "
+        ^ Rune_pjrt.Error.to_string error)
+
 let () =
   run "Hugr.Llama"
     [
@@ -299,6 +351,7 @@ let () =
           test "parameter shapes" test_parameter_shapes;
           test "decoder shape" test_decoder_shape;
           test "causal LM shape and values" test_causal_lm_shape_and_values;
+          test "large RoPE theta in float16" test_large_rope_theta_float16;
           test "causal mask" test_causal_mask;
           test "padding mask" test_padding_mask;
           test "explicit position IDs" test_explicit_position_ids;
@@ -309,5 +362,6 @@ let () =
           test "cached padding mask" test_cached_padding_mask;
           test "PJRT CUDA" test_pjrt_cuda;
           test "cached PJRT CUDA" test_cached_pjrt_cuda;
+          test "resident cached PJRT CUDA" test_resident_cached_pjrt_cuda;
         ];
     ]

@@ -48,6 +48,20 @@ let test_constant_capture () =
   in
   require "closed tensor constant captured" (constant_nodes <> [])
 
+let test_matmul_capture_uses_shape_placeholder () =
+  let lhs = Nx.ones Nx.float32 [| 64; 128 |] in
+  let rhs = Nx.ones Nx.float32 [| 128; 256 |] in
+  let capture =
+    Rune_pjrt.Trace.capture_one (fun input -> Nx.matmul input rhs) lhs
+  in
+  match capture.outputs with
+  | [ Rune_pjrt.Trace.Tensor output ] ->
+      require "matmul placeholder has the inferred output shape"
+        (Nx.shape output = [| 64; 256 |]);
+      require "matmul placeholder has scalar backing storage"
+        (Nx_buffer.length (Nx.data output) = 1)
+  | _ -> failf "test_trace: expected one matmul output"
+
 let test_erf_lowering () =
   let x = Nx.create Nx.float32 [| 3 |] [| -1.; 0.; 1. |] in
   let capture = Rune_pjrt.Trace.capture_one Nx.erf x in
@@ -56,7 +70,31 @@ let test_erf_lowering () =
     (contains_substring module_text
        "chlo.erf %arg0 : tensor<3xf32> -> tensor<3xf32>")
 
+let test_float16_reciprocal_lowering () =
+  let x = Nx.ones Nx.float16 [| 3 |] in
+  let capture = Rune_pjrt.Trace.capture_one Nx.recip x in
+  let module_text = Rune_pjrt.Stablehlo.of_program capture.program in
+  require "float16 reciprocal uses a floating-point one literal"
+    (contains_substring module_text
+       "stablehlo.constant dense<1.000000e+00> : tensor<3xf16>")
+
+let test_float16_non_finite_literal_lowering () =
+  let x = Nx.ones Nx.float16 [| 3 |] in
+  let negative_infinity = Nx.scalar Nx.float16 (-1.0e9) in
+  let capture =
+    Rune_pjrt.Trace.capture_one
+      (fun input -> Nx.add input negative_infinity)
+      x
+  in
+  let module_text = Rune_pjrt.Stablehlo.of_program capture.program in
+  require "float16 negative infinity uses its bit-pattern literal"
+    (contains_substring module_text
+       "stablehlo.constant dense<0xFC00> : tensor<f16>")
+
 let () =
   test_basic_trace ();
   test_constant_capture ();
-  test_erf_lowering ()
+  test_matmul_capture_uses_shape_placeholder ();
+  test_erf_lowering ();
+  test_float16_reciprocal_lowering ();
+  test_float16_non_finite_literal_lowering ()
