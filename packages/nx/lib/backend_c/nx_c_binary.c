@@ -809,21 +809,15 @@ LOW_PREC_CMP_KERNEL(cmplt, caml_ba_fp8_e5m2, f8e5m2, CMPLT_OP,
   }
 
 // Define comparison operators
-#define CMPGT_OP(x, y) ((x) > (y) ? true : false)
 #define CMPLE_OP(x, y) ((x) <= (y) ? true : false)
-#define CMPGE_OP(x, y) ((x) >= (y) ? true : false)
 #define CMPEQ_OP(x, y) ((x) == (y) ? true : false)
 #define CMPNE_OP(x, y) ((x) != (y) ? true : false)
 
 // Generate int4/uint4 comparison operations
 INT4_COMPARISON_OP_IMPL(cmplt, 1, i4, CMPLT_OP)
 INT4_COMPARISON_OP_IMPL(cmplt, 0, u4, CMPLT_OP)
-INT4_COMPARISON_OP_IMPL(cmpgt, 1, i4, CMPGT_OP)
-INT4_COMPARISON_OP_IMPL(cmpgt, 0, u4, CMPGT_OP)
 INT4_COMPARISON_OP_IMPL(cmple, 1, i4, CMPLE_OP)
 INT4_COMPARISON_OP_IMPL(cmple, 0, u4, CMPLE_OP)
-INT4_COMPARISON_OP_IMPL(cmpge, 1, i4, CMPGE_OP)
-INT4_COMPARISON_OP_IMPL(cmpge, 0, u4, CMPGE_OP)
 INT4_COMPARISON_OP_IMPL(cmpeq, 1, i4, CMPEQ_OP)
 INT4_COMPARISON_OP_IMPL(cmpeq, 0, u4, CMPEQ_OP)
 INT4_COMPARISON_OP_IMPL(cmpne, 1, i4, CMPNE_OP)

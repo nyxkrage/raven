@@ -46,6 +46,20 @@
 
 /* Helpers */
 
+#ifdef __linux__
+static void free_mount_entries(char **dirs, char **devs, char **types,
+                               int count) {
+  for (int i = 0; i < count; i++) {
+    free(dirs[i]);
+    free(devs[i]);
+    free(types[i]);
+  }
+  free(dirs);
+  free(devs);
+  free(types);
+}
+#endif
+
 #ifdef __APPLE__
 /* Allocate a 4-element int64 array for CPU time counters */
 static value alloc_cpu_row(int64_t user, int64_t nice, int64_t sys,
@@ -765,41 +779,38 @@ CAMLprim value caml_sysstat_getmounts(value unit) {
   struct mntent* mnt;
   while ((mnt = getmntent(f)) != NULL) {
     if (count >= capacity) {
-      capacity *= 2;
-      char** new_dirs = realloc(dirs, capacity * sizeof(char*));
-      char** new_devs = realloc(devs, capacity * sizeof(char*));
-      char** new_types = realloc(types, capacity * sizeof(char*));
-      if (!new_dirs || !new_devs || !new_types) {
-        /* Clean up on allocation failure */
-        for (int j = 0; j < count; j++) {
-          free(dirs[j]);
-          free(devs[j]);
-          free(types[j]);
-        }
-        free(new_dirs ? new_dirs : dirs);
-        free(new_devs ? new_devs : devs);
-        free(new_types ? new_types : types);
+      int new_capacity = capacity * 2;
+      char** resized = realloc(dirs, new_capacity * sizeof(char*));
+      if (!resized) {
+        free_mount_entries(dirs, devs, types, count);
         endmntent(f);
         result = caml_alloc(0, 0);
         CAMLreturn(result);
       }
-      dirs = new_dirs;
-      devs = new_devs;
-      types = new_types;
+      dirs = resized;
+      resized = realloc(devs, new_capacity * sizeof(char*));
+      if (!resized) {
+        free_mount_entries(dirs, devs, types, count);
+        endmntent(f);
+        result = caml_alloc(0, 0);
+        CAMLreturn(result);
+      }
+      devs = resized;
+      resized = realloc(types, new_capacity * sizeof(char*));
+      if (!resized) {
+        free_mount_entries(dirs, devs, types, count);
+        endmntent(f);
+        result = caml_alloc(0, 0);
+        CAMLreturn(result);
+      }
+      types = resized;
+      capacity = new_capacity;
     }
     dirs[count] = strdup(mnt->mnt_dir);
     devs[count] = strdup(mnt->mnt_fsname);
     types[count] = strdup(mnt->mnt_type);
     if (!dirs[count] || !devs[count] || !types[count]) {
-      /* Clean up on strdup failure */
-      for (int j = 0; j <= count; j++) {
-        free(dirs[j]);
-        free(devs[j]);
-        free(types[j]);
-      }
-      free(dirs);
-      free(devs);
-      free(types);
+      free_mount_entries(dirs, devs, types, count + 1);
       endmntent(f);
       result = caml_alloc(0, 0);
       CAMLreturn(result);
@@ -822,14 +833,7 @@ CAMLprim value caml_sysstat_getmounts(value unit) {
   }
 
   /* Free temporary buffers */
-  for (int i = 0; i < count; i++) {
-    free(dirs[i]);
-    free(devs[i]);
-    free(types[i]);
-  }
-  free(dirs);
-  free(devs);
-  free(types);
+  free_mount_entries(dirs, devs, types, count);
 #else
   result = caml_alloc(0, 0);
 #endif

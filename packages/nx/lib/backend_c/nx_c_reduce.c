@@ -220,8 +220,7 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
       fprintf(stderr, "nx: nx_c_" #name "_" #suffix ": null pointer\n");   \
       abort();                                                             \
     }                                                                      \
-    bool *is_reduced = (bool *)calloc(input->ndim, sizeof(bool));          \
-    if (!is_reduced) { fprintf(stderr, "nx: allocation failed\n"); abort(); } \
+    bool is_reduced[MAX_NDIM] = {false};                                  \
     for (int i = 0; i < num_axes; ++i) {                                   \
       if (axes[i] < 0 || axes[i] >= input->ndim) {                         \
         fprintf(stderr, "nx: invalid axis\n");                             \
@@ -230,11 +229,7 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
       is_reduced[axes[i]] = true;                                          \
     }                                                                      \
     int num_kept = input->ndim - num_axes;                                 \
-    int *kept_axes = (int *)malloc(num_kept * sizeof(int));                \
-    if (!kept_axes) {                                                      \
-      fprintf(stderr, "nx: allocation failed\n");                          \
-      abort();                                                             \
-    }                                                                      \
+    int kept_axes[MAX_NDIM];                                               \
     int kk = 0;                                                            \
     for (int i = 0; i < input->ndim; ++i) {                                \
       if (!is_reduced[i]) kept_axes[kk++] = i;                             \
@@ -248,16 +243,12 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
     }                                                                      \
     if (zero_size) reduce_prod = 0;                                        \
     if (reduce_prod == 0 && !HAS_IDENTITY) {                               \
-      free(is_reduced);                                                    \
-      free(kept_axes);                                                     \
       fprintf(stderr, "nx: zero-size array to reduction operation " #name  \
               " which has no identity\n");                                  \
       abort();                             \
     }                                                                      \
     long total_out = total_elements_safe(output);                          \
     if (total_out == 0) {                                                  \
-      free(is_reduced);                                                    \
-      free(kept_axes);                                                     \
       return;                                                              \
     }                                                                      \
     _Pragma("omp parallel for if(total_out > 1000)") for (long idx = 0;    \
@@ -277,7 +268,7 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
           local_in_coord[kept_axes[ii]] = local_out_coord[ii];             \
         }                                                                  \
       }                                                                    \
-      T acc;                                                               \
+      T acc = IDENTITY;                                                    \
       if (reduce_prod == 0) {                                              \
         acc = IDENTITY;                                                    \
       } else {                                                             \
@@ -310,8 +301,6 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
       long out_off = output->offset + get_offset(output, local_out_coord); \
       ((T *)output->data)[out_off] = acc;                                  \
     }                                                                      \
-    free(is_reduced);                                                      \
-    free(kept_axes);                                                       \
   }
 
 // Macro to generate both for a type
@@ -383,7 +372,7 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
           local_in_coord[kept_axes[ii]] = local_out_coord[ii];                 \
         }                                                                      \
       }                                                                        \
-      float acc;                                                               \
+      float acc = IDENTITY_FLOAT;                                              \
       if (reduce_prod == 0) {                                                  \
         acc = IDENTITY_FLOAT;                                                  \
       } else {                                                                 \
@@ -494,7 +483,7 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
           local_in_coord[kept_axes[ii]] = local_out_coord[ii];                 \
         }                                                                      \
       }                                                                        \
-      int acc;                                                                 \
+      int acc = IDENTITY;                                                      \
       if (reduce_prod == 0) {                                                  \
         acc = IDENTITY;                                                        \
       } else {                                                                 \
@@ -787,6 +776,8 @@ static const reduce_op_table reduce_sum_table = {
     .u16 = nx_c_reduce_sum_u16,
     .i32 = nx_c_reduce_sum_i32,
     .i64 = nx_c_reduce_sum_i64,
+    .u32 = nx_c_reduce_sum_u32,
+    .u64 = nx_c_reduce_sum_u64,
     .inat = nx_c_reduce_sum_inat,
     .f16 = nx_c_reduce_sum_f16,
     .f32 = nx_c_reduce_sum_f32,
@@ -938,6 +929,8 @@ static const reduce_op_table reduce_max_table = {
     .u16 = nx_c_reduce_max_u16,
     .i32 = nx_c_reduce_max_i32,
     .i64 = nx_c_reduce_max_i64,
+    .u32 = nx_c_reduce_max_u32,
+    .u64 = nx_c_reduce_max_u64,
     .inat = nx_c_reduce_max_inat,
     .f16 = nx_c_reduce_max_f16,
     .f32 = nx_c_reduce_max_f32,
@@ -1150,6 +1143,8 @@ static const reduce_op_table reduce_min_table = {
     .u16 = nx_c_reduce_min_u16,
     .i32 = nx_c_reduce_min_i32,
     .i64 = nx_c_reduce_min_i64,
+    .u32 = nx_c_reduce_min_u32,
+    .u64 = nx_c_reduce_min_u64,
     .inat = nx_c_reduce_min_inat,
     .f16 = nx_c_reduce_min_f16,
     .f32 = nx_c_reduce_min_f32,

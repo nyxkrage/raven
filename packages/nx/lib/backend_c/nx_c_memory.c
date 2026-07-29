@@ -38,16 +38,6 @@ static value create_tensor_value(value v_shape, value v_strides, value v_data,
   CAMLreturn(v_new);
 }
 
-// Helper to set standard C-contiguous strides
-static void set_standard_strides(int *strides, int *shape, int ndim) {
-  if (ndim == 0) return;
-  int stride = 1;
-  for (int i = ndim - 1; i >= 0; i--) {
-    strides[i] = stride;
-    stride *= shape[i];
-  }
-}
-
 // Helper to check if two ndarrays have the same shape
 static bool same_shape(const ndarray_t *a, const ndarray_t *b) {
   if (a->ndim != b->ndim) return false;

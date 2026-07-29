@@ -91,6 +91,14 @@ typedef struct {
     d[dst_off] = OP_EXPR(a, b);                                               \
   }
 
+#define ELEM_SET_FOR_TYPE(T, suffix)                                          \
+  static void nx_c_elem_set_##suffix(void *src, long src_off, void *dst,      \
+                                     long dst_off) {                          \
+    T *s = (T *)src;                                                          \
+    T *d = (T *)dst;                                                          \
+    d[dst_off] = s[src_off];                                                  \
+  }
+
 // Low-precision float elem op (convert to float)
 #define LOW_PREC_ELEM_OP(name, T, suffix, OP_EXPR, TO_FLOAT, FROM_FLOAT)      \
   static void nx_c_elem_##name##_##suffix(void *src, long src_off, void *dst, \
@@ -141,23 +149,42 @@ typedef struct {
     }                                                                         \
   }
 
-// Generate for set (assign)
-#define SET_EXPR(a, b) (a)
-GENERATE_ELEM_OP(set, SET_EXPR)
+#define INT4_SET(suffix)                                                      \
+  static void nx_c_elem_set_##suffix(void *src, long src_off, void *dst,      \
+                                     long dst_off) {                          \
+    uint8_t *s = (uint8_t *)src;                                              \
+    uint8_t *d = (uint8_t *)dst;                                              \
+    long s_byte = src_off / 2;                                                \
+    int s_shift = (src_off % 2) * 4;                                         \
+    long d_byte = dst_off / 2;                                                \
+    int d_shift = (dst_off % 2) * 4;                                         \
+    uint8_t nibble = (s[s_byte] >> s_shift) & 0x0F;                           \
+    uint8_t mask = (uint8_t)(0x0F << d_shift);                               \
+    d[d_byte] = (d[d_byte] & (uint8_t)~mask) | (nibble << d_shift);           \
+  }
 
-LOW_PREC_ELEM_OP(set, uint16_t, f16, SET_EXPR, half_to_float, float_to_half)
-LOW_PREC_ELEM_OP(set, caml_ba_bfloat16, bf16, SET_EXPR, bfloat16_to_float,
-                 float_to_bfloat16)
-LOW_PREC_ELEM_OP(set, caml_ba_fp8_e4m3, f8e4m3, SET_EXPR, fp8_e4m3_to_float,
-                 float_to_fp8_e4m3)
-LOW_PREC_ELEM_OP(set, caml_ba_fp8_e5m2, f8e5m2, SET_EXPR, fp8_e5m2_to_float,
-                 float_to_fp8_e5m2)
-
-COMPLEX_ELEM_OP_FOR_TYPE(set, complex32, c32, SET_EXPR)
-COMPLEX_ELEM_OP_FOR_TYPE(set, complex64, c64, SET_EXPR)
-INT4_ELEM_OP(set, 1, i4, SET_EXPR)
-INT4_ELEM_OP(set, 0, u4, SET_EXPR)
-ELEM_OP_FOR_TYPE(set, caml_ba_bool, bool_, SET_EXPR)
+// Generate exact same-dtype assignment without converting low-precision
+// values or reading the destination element.
+ELEM_SET_FOR_TYPE(int8_t, i8)
+ELEM_SET_FOR_TYPE(uint8_t, u8)
+ELEM_SET_FOR_TYPE(int16_t, i16)
+ELEM_SET_FOR_TYPE(uint16_t, u16)
+ELEM_SET_FOR_TYPE(int32_t, i32)
+ELEM_SET_FOR_TYPE(int64_t, i64)
+ELEM_SET_FOR_TYPE(uint32_t, u32)
+ELEM_SET_FOR_TYPE(uint64_t, u64)
+ELEM_SET_FOR_TYPE(intnat, inat)
+ELEM_SET_FOR_TYPE(uint16_t, f16)
+ELEM_SET_FOR_TYPE(float, f32)
+ELEM_SET_FOR_TYPE(double, f64)
+ELEM_SET_FOR_TYPE(complex32, c32)
+ELEM_SET_FOR_TYPE(complex64, c64)
+ELEM_SET_FOR_TYPE(caml_ba_bfloat16, bf16)
+ELEM_SET_FOR_TYPE(caml_ba_bool, bool_)
+ELEM_SET_FOR_TYPE(caml_ba_fp8_e4m3, f8e4m3)
+ELEM_SET_FOR_TYPE(caml_ba_fp8_e5m2, f8e5m2)
+INT4_SET(i4)
+INT4_SET(u4)
 BUILD_ELEM_OP_TABLE(set);
 
 // Generate for add (accumulate)
@@ -189,8 +216,19 @@ typedef struct {
 
 static void multi_iterator_init(multi_iterator_t *it, const ndarray_t *nd) {
   it->ndim = nd->ndim;
-  it->shape = (long *)malloc(it->ndim * sizeof(long));
-  it->coords = (long *)calloc(it->ndim, sizeof(long));
+  if (it->ndim < 0 || it->ndim > MAX_NDIM) {
+    fprintf(stderr, "nx: multi_iterator_init: invalid rank\n");
+    abort();
+  }
+  size_t count = (size_t)it->ndim;
+  it->shape = count == 0 ? NULL : (long *)malloc(count * sizeof(long));
+  it->coords = count == 0 ? NULL : (long *)calloc(count, sizeof(long));
+  if (count > 0 && (!it->shape || !it->coords)) {
+    free(it->shape);
+    free(it->coords);
+    fprintf(stderr, "nx: multi_iterator_init: allocation failed\n");
+    abort();
+  }
   it->has_elements = 1;
   for (int i = 0; i < it->ndim; i++) {
     long dim = nd->shape[i];

@@ -92,15 +92,6 @@ static void nx_unpack_c64(complex64* dst, const complex64* src, int m, int n,
   }
 }
 
-// Helper function to check if character matches (case insensitive)
-static int lsame(char ca, char cb) {
-  if (ca == cb) return 1;
-  int inta = (unsigned char)ca;
-  int intb = (unsigned char)cb;
-  return (inta >= 'A' && inta <= 'Z' ? inta + 32 : inta) ==
-         (intb >= 'A' && intb <= 'Z' ? intb + 32 : intb);
-}
-
 // Cholesky decomposition implementations using LAPACK
 
 static int cholesky_float32(float* a, int n, int upper) {

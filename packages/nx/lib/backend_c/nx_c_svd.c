@@ -15,47 +15,6 @@
 
 #include "nx_c_shared.h"
 
-// Machine epsilon for float32 and float64
-#define NX_EPS32 FLT_EPSILON
-#define NX_EPS64 DBL_EPSILON
-
-// Helper to get element size
-static long get_element_size(int kind) {
-  switch (kind) {
-    case CAML_BA_SINT8:
-    case CAML_BA_UINT8:
-    case NX_BA_BOOL:
-    case NX_BA_FP8_E4M3:
-    case NX_BA_FP8_E5M2:
-      return 1;
-    case CAML_BA_SINT16:
-    case CAML_BA_UINT16:
-    case CAML_BA_FLOAT16:
-    case NX_BA_BFLOAT16:
-      return 2;
-    case CAML_BA_INT32:
-    case CAML_BA_FLOAT32:
-    case NX_BA_UINT32:
-      return 4;
-    case CAML_BA_INT64:
-    case CAML_BA_FLOAT64:
-    case NX_BA_UINT64:
-    case CAML_BA_NATIVE_INT:
-    case CAML_BA_CAML_INT:
-      return 8;
-    case CAML_BA_COMPLEX32:
-      return 4;
-    case CAML_BA_COMPLEX64:
-      return 16;
-    case NX_BA_INT4:
-    case NX_BA_UINT4:
-      caml_failwith("get_element_size: int4/uint4 require special handling");
-    default:
-      caml_failwith("get_element_size: unsupported kind");
-  }
-  return 0;
-}
-
 // Helper functions for shape and stride operations
 static inline int nx_ndim(value v_shape) { return Wosize_val(v_shape); }
 
@@ -166,375 +125,12 @@ static void nx_unpack_c64(complex64* dst, const complex64* src, int m, int n,
   }
 }
 
-// SVD helper functions
-static inline float sign_float32(float x) { return (x >= 0.0f) ? 1.0f : -1.0f; }
-
-static inline double sign_float64(double x) { return (x >= 0.0) ? 1.0 : -1.0; }
-
-static inline float hypot_float32(float a, float b) {
-  float absa = fabsf(a);
-  float absb = fabsf(b);
-  if (absa > absb) {
-    float ratio = absb / absa;
-    return absa * sqrtf(1.0f + ratio * ratio);
-  } else if (absb > 0.0f) {
-    float ratio = absa / absb;
-    return absb * sqrtf(1.0f + ratio * ratio);
-  } else {
-    return 0.0f;
-  }
-}
-
-static inline double hypot_float64(double a, double b) {
-  double absa = fabs(a);
-  double absb = fabs(b);
-  if (absa > absb) {
-    double ratio = absb / absa;
-    return absa * sqrt(1.0 + ratio * ratio);
-  } else if (absb > 0.0) {
-    double ratio = absa / absb;
-    return absb * sqrt(1.0 + ratio * ratio);
-  } else {
-    return 0.0;
-  }
-}
-
-static void givens_float32(float a, float b, float* c, float* s) {
-  if (b == 0.0f) {
-    *c = 1.0f;
-    *s = 0.0f;
-  } else if (fabsf(b) > fabsf(a)) {
-    float t = a / b;
-    float sign_b = sign_float32(b);
-    *s = sign_b / sqrtf(1.0f + t * t);
-    *c = *s * t;
-  } else {
-    float t = b / a;
-    float sign_a = sign_float32(a);
-    *c = sign_a / sqrtf(1.0f + t * t);
-    *s = *c * t;
-  }
-}
-
-static void givens_float64(double a, double b, double* c, double* s) {
-  if (b == 0.0) {
-    *c = 1.0;
-    *s = 0.0;
-  } else if (fabs(b) > fabs(a)) {
-    double t = a / b;
-    double sign_b = sign_float64(b);
-    *s = sign_b / sqrt(1.0 + t * t);
-    *c = *s * t;
-  } else {
-    double t = b / a;
-    double sign_a = sign_float64(a);
-    *c = sign_a / sqrt(1.0 + t * t);
-    *s = *c * t;
-  }
-}
-
-static void apply_givens_left_float32(float* a, int m, int n, int i, int j,
-                                      float c, float s) {
-#pragma omp parallel for if (n > 100)
-  for (int k = 0; k < n; k++) {
-    float temp = c * a[i * n + k] + s * a[j * n + k];
-    a[j * n + k] = -s * a[i * n + k] + c * a[j * n + k];
-    a[i * n + k] = temp;
-  }
-}
-
-static void apply_givens_left_float64(double* a, int m, int n, int i, int j,
-                                      double c, double s) {
-#pragma omp parallel for if (n > 100)
-  for (int k = 0; k < n; k++) {
-    double temp = c * a[i * n + k] + s * a[j * n + k];
-    a[j * n + k] = -s * a[i * n + k] + c * a[j * n + k];
-    a[i * n + k] = temp;
-  }
-}
-
-static void apply_givens_right_float32(float* a, int m, int n, int i, int j,
-                                       float c, float s) {
-#pragma omp parallel for if (m > 100)
-  for (int k = 0; k < m; k++) {
-    float temp = c * a[k * n + i] + s * a[k * n + j];
-    a[k * n + j] = -s * a[k * n + i] + c * a[k * n + j];
-    a[k * n + i] = temp;
-  }
-}
-
-static void apply_givens_right_float64(double* a, int m, int n, int i, int j,
-                                       double c, double s) {
-#pragma omp parallel for if (m > 100)
-  for (int k = 0; k < m; k++) {
-    double temp = c * a[k * n + i] + s * a[k * n + j];
-    a[k * n + j] = -s * a[k * n + i] + c * a[k * n + j];
-    a[k * n + i] = temp;
-  }
-}
-
-static void bidiagonalize_float32(float* a, float* u, float* v, float* diag,
-                                  float* superdiag, int m, int n) {
-  const int minmn = (m < n ? m : n);
-#pragma omp parallel for if (m > 100)
-  for (int i = 0; i < m; i++)
-    for (int j = 0; j < m; j++) u[i * m + j] = (i == j) ? 1.f : 0.f;
-#pragma omp parallel for if (n > 100)
-  for (int i = 0; i < n; i++)
-    for (int j = 0; j < n; j++) v[i * n + j] = (i == j) ? 1.f : 0.f;
-  for (int p = 0; p < minmn; ++p) {
-    float norm2 = 0.f;
-    for (int i = p; i < m; i++) norm2 += a[i * n + p] * a[i * n + p];
-    float norm = sqrtf(norm2);
-    if (norm > 0.f) {
-      float sign = sign_float32(a[p * n + p]);
-      float alpha = -sign * norm;
-      a[p * n + p] -= alpha;
-      float beta = 1.f / (alpha * a[p * n + p]);
-#pragma omp parallel for if (n - p > 100)
-      for (int j = p + 1; j < n; ++j) {
-        float gamma = 0.f;
-        for (int i = p; i < m; i++) gamma += a[i * n + p] * a[i * n + j];
-        gamma *= beta;
-        for (int i = p; i < m; i++) a[i * n + j] -= gamma * a[i * n + p];
-      }
-#pragma omp parallel for if (m > 100)
-      for (int j = 0; j < m; ++j) {
-        float gamma = 0.f;
-        for (int i = p; i < m; i++) gamma += a[i * n + p] * u[i * m + j];
-        gamma *= beta;
-        for (int i = p; i < m; i++) u[i * m + j] -= gamma * a[i * n + p];
-      }
-    }
-    diag[p] = a[p * n + p];
-    if (p < n - 1) {
-      float norm2r = 0.f;
-      for (int j = p + 1; j < n; j++) norm2r += a[p * n + j] * a[p * n + j];
-      float normr = sqrtf(norm2r);
-      if (normr > 0.f) {
-        float sign = sign_float32(a[p * n + (p + 1)]);
-        float alpha = -sign * normr;
-        a[p * n + (p + 1)] -= alpha;
-        float beta = 1.f / (alpha * a[p * n + (p + 1)]);
-#pragma omp parallel for if (m - p > 100)
-        for (int i = p + 1; i < m; ++i) {
-          float gamma = 0.f;
-          for (int j = p + 1; j < n; j++) gamma += a[i * n + j] * a[p * n + j];
-          gamma *= beta;
-          for (int j = p + 1; j < n; j++) a[i * n + j] -= gamma * a[p * n + j];
-        }
-#pragma omp parallel for if (n > 100)
-        for (int j = 0; j < n; ++j) {
-          float gamma = 0.f;
-          for (int t = p + 1; t < n; t++) gamma += v[t * n + j] * a[p * n + t];
-          gamma *= beta;
-          for (int t = p + 1; t < n; t++) v[t * n + j] -= gamma * a[p * n + t];
-        }
-      }
-      superdiag[p] = (p < minmn - 1) ? a[p * n + (p + 1)] : 0.f;
-    }
-  }
-}
-
-static void bidiagonalize_float64(double* a, double* u, double* v, double* diag,
-                                  double* superdiag, int m, int n) {
-  const int minmn = (m < n ? m : n);
-#pragma omp parallel for if (m > 100)
-  for (int i = 0; i < m; i++)
-    for (int j = 0; j < m; j++) u[i * m + j] = (i == j) ? 1.0 : 0.0;
-#pragma omp parallel for if (n > 100)
-  for (int i = 0; i < n; i++)
-    for (int j = 0; j < n; j++) v[i * n + j] = (i == j) ? 1.0 : 0.0;
-  for (int p = 0; p < minmn; ++p) {
-    double norm2 = 0.0;
-    for (int i = p; i < m; i++) norm2 += a[i * n + p] * a[i * n + p];
-    double norm = sqrt(norm2);
-    if (norm > 0.0) {
-      double sign = sign_float64(a[p * n + p]);
-      double alpha = -sign * norm;
-      a[p * n + p] -= alpha;
-      double beta = 1.0 / (alpha * a[p * n + p]);
-#pragma omp parallel for if (n - p > 100)
-      for (int j = p + 1; j < n; ++j) {
-        double gamma = 0.0;
-        for (int i = p; i < m; i++) gamma += a[i * n + p] * a[i * n + j];
-        gamma *= beta;
-        for (int i = p; i < m; i++) a[i * n + j] -= gamma * a[i * n + p];
-      }
-#pragma omp parallel for if (m > 100)
-      for (int j = 0; j < m; ++j) {
-        double gamma = 0.0;
-        for (int i = p; i < m; i++) gamma += a[i * n + p] * u[i * m + j];
-        gamma *= beta;
-        for (int i = p; i < m; i++) u[i * m + j] -= gamma * a[i * n + p];
-      }
-    }
-    diag[p] = a[p * n + p];
-    if (p < n - 1) {
-      double norm2r = 0.0;
-      for (int j = p + 1; j < n; j++) norm2r += a[p * n + j] * a[p * n + j];
-      double normr = sqrt(norm2r);
-      if (normr > 0.0) {
-        double sign = sign_float64(a[p * n + (p + 1)]);
-        double alpha = -sign * normr;
-        a[p * n + (p + 1)] -= alpha;
-        double beta = 1.0 / (alpha * a[p * n + (p + 1)]);
-#pragma omp parallel for if (m - p > 100)
-        for (int i = p + 1; i < m; ++i) {
-          double gamma = 0.0;
-          for (int j = p + 1; j < n; j++) gamma += a[i * n + j] * a[p * n + j];
-          gamma *= beta;
-          for (int j = p + 1; j < n; j++) a[i * n + j] -= gamma * a[p * n + j];
-        }
-#pragma omp parallel for if (n > 100)
-        for (int j = 0; j < n; ++j) {
-          double gamma = 0.0;
-          for (int t = p + 1; t < n; t++) gamma += v[t * n + j] * a[p * n + t];
-          gamma *= beta;
-          for (int t = p + 1; t < n; t++) v[t * n + j] -= gamma * a[p * n + t];
-        }
-      }
-      superdiag[p] = (p < minmn - 1) ? a[p * n + (p + 1)] : 0.0;
-    }
-  }
-}
-
-static void svd_qr_iteration_float32(float* diag, float* superdiag, float* u,
-                                     float* v, int m, int n, int p, int q) {
-  float d = (diag[q - 1] - diag[q]) / 2.0f;
-  float shift =
-      diag[q] - superdiag[q - 1] * superdiag[q - 1] /
-                    (d + sign_float32(d) * hypot_float32(d, superdiag[q - 1]));
-  float c, s;
-  float f = diag[p] - shift;
-  float g = superdiag[p];
-  for (int k = p; k < q; k++) {
-    givens_float32(f, g, &c, &s);
-    if (k > p) superdiag[k - 1] = hypot_float32(f, g);
-    f = c * diag[k] + s * superdiag[k];
-    superdiag[k] = -s * diag[k] + c * superdiag[k];
-    g = s * diag[k + 1];
-    diag[k + 1] = c * diag[k + 1];
-    apply_givens_right_float32(v, n, n, k, k + 1, c, s);
-    givens_float32(f, g, &c, &s);
-    diag[k] = hypot_float32(f, g);
-    f = c * superdiag[k] + s * diag[k + 1];
-    diag[k + 1] = -s * superdiag[k] + c * diag[k + 1];
-    if (k < q - 1) {
-      g = s * superdiag[k + 1];
-      superdiag[k + 1] = c * superdiag[k + 1];
-    }
-    apply_givens_left_float32(u, m, m, k, k + 1, c, s);
-  }
-  superdiag[q - 1] = f;
-}
-
-static void svd_qr_iteration_float64(double* diag, double* superdiag, double* u,
-                                     double* v, int m, int n, int p, int q) {
-  double d = (diag[q - 1] - diag[q]) / 2.0;
-  double shift =
-      diag[q] - superdiag[q - 1] * superdiag[q - 1] /
-                    (d + sign_float64(d) * hypot_float64(d, superdiag[q - 1]));
-  double c, s;
-  double f = diag[p] - shift;
-  double g = superdiag[p];
-  for (int k = p; k < q; k++) {
-    givens_float64(f, g, &c, &s);
-    if (k > p) superdiag[k - 1] = hypot_float64(f, g);
-    f = c * diag[k] + s * superdiag[k];
-    superdiag[k] = -s * diag[k] + c * superdiag[k];
-    g = s * diag[k + 1];
-    diag[k + 1] = c * diag[k + 1];
-    apply_givens_right_float64(v, n, n, k, k + 1, c, s);
-    givens_float64(f, g, &c, &s);
-    diag[k] = hypot_float64(f, g);
-    f = c * superdiag[k] + s * diag[k + 1];
-    diag[k + 1] = -s * superdiag[k] + c * diag[k + 1];
-    if (k < q - 1) {
-      g = s * superdiag[k + 1];
-      superdiag[k + 1] = c * superdiag[k + 1];
-    }
-    apply_givens_left_float64(u, m, m, k, k + 1, c, s);
-  }
-  superdiag[q - 1] = f;
-}
-
-static void svd_iterate_float32(float* diag, float* superdiag, float* u,
-                                float* v, int m, int n) {
-  const int minmn = (m < n ? m : n);
-  const float tol = NX_EPS32 * (float)(m > n ? m : n);
-  const int max_iter = 75 * minmn;
-  int iter = 0;
-  while (iter++ < max_iter) {
-    int converged = 1;
-    for (int i = 0; i < minmn - 1; i++) {
-      if (fabsf(superdiag[i]) > tol * (fabsf(diag[i]) + fabsf(diag[i + 1]))) {
-        converged = 0;
-        break;
-      }
-    }
-    if (converged) break;
-    int q_pos = minmn - 1;
-    while (q_pos > 0 &&
-           fabsf(superdiag[q_pos - 1]) <=
-               tol * (fabsf(diag[q_pos - 1]) + fabsf(diag[q_pos]))) {
-      superdiag[q_pos - 1] = 0.0f;
-      q_pos--;
-    }
-    int p_pos = q_pos;
-    while (p_pos > 0 && fabsf(superdiag[p_pos - 1]) >
-                            tol * (fabsf(diag[p_pos - 1]) + fabsf(diag[p_pos])))
-      p_pos--;
-    if (p_pos < q_pos) {
-      svd_qr_iteration_float32(diag, superdiag, u, v, m, n, p_pos, q_pos);
-    }
-  }
-  if (iter >= max_iter) {
-    // Handle non-convergence if needed, but for production, assume convergence
-    // or log
-  }
-}
-
-static void svd_iterate_float64(double* diag, double* superdiag, double* u,
-                                double* v, int m, int n) {
-  const int minmn = (m < n ? m : n);
-  const double tol = NX_EPS64 * (double)(m > n ? m : n);
-  const int max_iter = 75 * minmn;
-  int iter = 0;
-  while (iter++ < max_iter) {
-    int converged = 1;
-    for (int i = 0; i < minmn - 1; i++) {
-      if (fabs(superdiag[i]) > tol * (fabs(diag[i]) + fabs(diag[i + 1]))) {
-        converged = 0;
-        break;
-      }
-    }
-    if (converged) break;
-    int q_pos = minmn - 1;
-    while (q_pos > 0 && fabs(superdiag[q_pos - 1]) <=
-                            tol * (fabs(diag[q_pos - 1]) + fabs(diag[q_pos]))) {
-      superdiag[q_pos - 1] = 0.0;
-      q_pos--;
-    }
-    int p_pos = q_pos;
-    while (p_pos > 0 && fabs(superdiag[p_pos - 1]) >
-                            tol * (fabs(diag[p_pos - 1]) + fabs(diag[p_pos])))
-      p_pos--;
-    if (p_pos < q_pos) {
-      svd_qr_iteration_float64(diag, superdiag, u, v, m, n, p_pos, q_pos);
-    }
-  }
-  if (iter >= max_iter) {
-    // Handle non-convergence if needed
-  }
-}
-
 // SVD implementations
-static void svd_float32(float* a, float* u, float* s, float* vt, int m, int n,
-                        int full_matrices) {
+static lapack_int svd_float32(float* a, float* u, float* s, float* vt, int m,
+                              int n, int full_matrices) {
   // LAPACK destroys the input matrix, so we need to make a copy
   float* a_copy = (float*)malloc(m * n * sizeof(float));
-  if (!a_copy) return;
+  if (!a_copy) return -1010;
   memcpy(a_copy, a, m * n * sizeof(float));
 
   char jobu = full_matrices ? 'A' : 'S';
@@ -549,20 +145,21 @@ static void svd_float32(float* a, float* u, float* s, float* vt, int m, int n,
   float* superb = (float*)malloc((minmn - 1) * sizeof(float));
   if (!superb) {
     free(a_copy);
-    return;
+    return -1010;
   }
 
   lapack_int info = LAPACKE_sgesvd(LAPACK_ROW_MAJOR, jobu, jobvt, m, n, a_copy, n, s, u, ldu, vt, ldvt, superb);
   free(a_copy);
   free(superb);
   // Note: LAPACK returns singular values in descending order, which matches our expectation
+  return info;
 }
 
-static void svd_float64(double* a, double* u, double* s, double* vt, int m,
-                        int n, int full_matrices) {
+static lapack_int svd_float64(double* a, double* u, double* s, double* vt,
+                              int m, int n, int full_matrices) {
   // LAPACK destroys the input matrix, so we need to make a copy
   double* a_copy = (double*)malloc(m * n * sizeof(double));
-  if (!a_copy) return;
+  if (!a_copy) return -1010;
   memcpy(a_copy, a, m * n * sizeof(double));
 
   char jobu = full_matrices ? 'A' : 'S';
@@ -577,386 +174,22 @@ static void svd_float64(double* a, double* u, double* s, double* vt, int m,
   double* superb = (double*)malloc((minmn - 1) * sizeof(double));
   if (!superb) {
     free(a_copy);
-    return;
+    return -1010;
   }
 
   lapack_int info = LAPACKE_dgesvd(LAPACK_ROW_MAJOR, jobu, jobvt, m, n, a_copy, n, s, u, ldu, vt, ldvt, superb);
   free(a_copy);
   free(superb);
   // Note: LAPACK returns singular values in descending order, which matches our expectation
+  return info;
 }
 
-// Complex SVD helpers (similar structure, with conj and cabs)
-static inline complex32 sign_complex32(complex32 x) {
-  float mag = cabsf(x);
-  return (mag == 0.0f) ? (1.0f + 0.0f * I) : (x / mag);
-}
-
-static inline complex64 sign_complex64(complex64 x) {
-  double mag = cabs(x);
-  return (mag == 0.0) ? (1.0 + 0.0 * I) : (x / mag);
-}
-
-static inline float hypot_complex32(complex32 a, complex32 b) {
-  return hypot_float32(crealf(a), cimagf(a)) +
-         hypot_float32(crealf(b), cimagf(b));  // Approximate for simplicity
-}
-
-static inline double hypot_complex64(complex64 a, complex64 b) {
-  return hypot_float64(creal(a), cimag(a)) + hypot_float64(creal(b), cimag(b));
-}
-
-static void givens_complex32(complex32 a, complex32 b, float* c, complex32* s) {
-  float na = cabsf(a);
-  float nb = cabsf(b);
-  if (nb == 0.0f) {
-    *c = 1.0f;
-    *s = 0.0f + 0.0f * I;
-  } else if (nb > na) {
-    complex32 t = a / b;
-    *s = (1.0f / sqrtf(1.0f + cabsf(t) * cabsf(t))) * sign_complex32(b);
-    *c = crealf(*s * t);
-  } else {
-    complex32 t = b / a;
-    *c = 1.0f / sqrtf(1.0f + cabsf(t) * cabsf(t));
-    *s = *c * t * sign_complex32(a);
-  }
-}
-
-static void givens_complex64(complex64 a, complex64 b, double* c,
-                             complex64* s) {
-  double na = cabs(a);
-  double nb = cabs(b);
-  if (nb == 0.0) {
-    *c = 1.0;
-    *s = 0.0 + 0.0 * I;
-  } else if (nb > na) {
-    complex64 t = a / b;
-    *s = (1.0 / sqrt(1.0 + cabs(t) * cabs(t))) * sign_complex64(b);
-    *c = creal(*s * t);
-  } else {
-    complex64 t = b / a;
-    *c = 1.0 / sqrt(1.0 + cabs(t) * cabs(t));
-    *s = *c * t * sign_complex64(a);
-  }
-}
-
-static void apply_givens_left_complex32(complex32* a, int m, int n, int i,
-                                        int j, float c, complex32 s) {
-#pragma omp parallel for if (n > 100)
-  for (int k = 0; k < n; k++) {
-    complex32 temp = c * a[i * n + k] + s * a[j * n + k];
-    a[j * n + k] = -conj(s) * a[i * n + k] + c * a[j * n + k];
-    a[i * n + k] = temp;
-  }
-}
-
-static void apply_givens_left_complex64(complex64* a, int m, int n, int i,
-                                        int j, double c, complex64 s) {
-#pragma omp parallel for if (n > 100)
-  for (int k = 0; k < n; k++) {
-    complex64 temp = c * a[i * n + k] + s * a[j * n + k];
-    a[j * n + k] = -conj(s) * a[i * n + k] + c * a[j * n + k];
-    a[i * n + k] = temp;
-  }
-}
-
-static void apply_givens_right_complex32(complex32* a, int m, int n, int i,
-                                         int j, float c, complex32 s) {
-#pragma omp parallel for if (m > 100)
-  for (int k = 0; k < m; k++) {
-    complex32 temp = c * a[k * n + i] + conj(s) * a[k * n + j];
-    a[k * n + j] = -s * a[k * n + i] + c * a[k * n + j];
-    a[k * n + i] = temp;
-  }
-}
-
-static void apply_givens_right_complex64(complex64* a, int m, int n, int i,
-                                         int j, double c, complex64 s) {
-#pragma omp parallel for if (m > 100)
-  for (int k = 0; k < m; k++) {
-    complex64 temp = c * a[k * n + i] + conj(s) * a[k * n + j];
-    a[k * n + j] = -s * a[k * n + i] + c * a[k * n + j];
-    a[k * n + i] = temp;
-  }
-}
-
-static void bidiagonalize_complex32(complex32* a, complex32* u, complex32* v,
-                                    float* diag, float* superdiag, int m,
-                                    int n) {
-  const int minmn = (m < n ? m : n);
-#pragma omp parallel for if (m > 100)
-  for (int i = 0; i < m; i++)
-    for (int j = 0; j < m; j++) u[i * m + j] = (i == j) ? 1.0f : 0.0f;
-#pragma omp parallel for if (n > 100)
-  for (int i = 0; i < n; i++)
-    for (int j = 0; j < n; j++) v[i * n + j] = (i == j) ? 1.0f : 0.0f;
-  for (int p = 0; p < minmn; ++p) {
-    float norm2 = 0.0f;
-    for (int i = p; i < m; i++) {
-      norm2 += crealf(a[i * n + p] * conjf(a[i * n + p]));
-    }
-    float norm = sqrtf(norm2);
-    if (norm > 0.0f) {
-      complex32 phase = a[p * n + p] / cabsf(a[p * n + p]);
-      complex32 alpha = -norm * phase;
-      a[p * n + p] -= alpha;
-      float beta = 1.0f / crealf(conjf(alpha) * a[p * n + p] / norm);
-#pragma omp parallel for if (n - p > 100)
-      for (int j = p + 1; j < n; ++j) {
-        complex32 gamma = 0.0f + 0.0f * I;
-        for (int i = p; i < m; i++) gamma += conjf(a[i * n + p]) * a[i * n + j];
-        gamma *= beta;
-        for (int i = p; i < m; i++) a[i * n + j] -= gamma * a[i * n + p];
-      }
-#pragma omp parallel for if (m > 100)
-      for (int j = 0; j < m; ++j) {
-        complex32 gamma = 0.0f + 0.0f * I;
-        for (int i = p; i < m; i++) gamma += conjf(a[i * n + p]) * u[i * m + j];
-        gamma *= beta;
-        for (int i = p; i < m; i++) u[i * m + j] -= gamma * a[i * n + p];
-      }
-    }
-    diag[p] = cabsf(a[p * n + p]);
-    a[p * n + p] = diag[p];
-    if (p < n - 1) {
-      float norm2r = 0.0f;
-      for (int j = p + 1; j < n; j++) {
-        norm2r += crealf(a[p * n + j] * conjf(a[p * n + j]));
-      }
-      float normr = sqrtf(norm2r);
-      if (normr > 0.0f) {
-        complex32 phase = a[p * n + (p + 1)] / cabsf(a[p * n + (p + 1)]);
-        complex32 alpha = -normr * phase;
-        a[p * n + (p + 1)] -= alpha;
-        float beta = 1.0f / crealf(a[p * n + (p + 1)] * conjf(alpha) / normr);
-#pragma omp parallel for if (m - p > 100)
-        for (int i = p + 1; i < m; ++i) {
-          complex32 gamma = 0.0f + 0.0f * I;
-          for (int j = p + 1; j < n; j++)
-            gamma += a[i * n + j] * conjf(a[p * n + j]);
-          gamma *= beta;
-          for (int j = p + 1; j < n; j++) a[i * n + j] -= gamma * a[p * n + j];
-        }
-#pragma omp parallel for if (n > 100)
-        for (int j = 0; j < n; ++j) {
-          complex32 gamma = 0.0f + 0.0f * I;
-          for (int t = p + 1; t < n; t++)
-            gamma += v[t * n + j] * conjf(a[p * n + t]);
-          gamma *= beta;
-          for (int t = p + 1; t < n; t++) v[t * n + j] -= gamma * a[p * n + t];
-        }
-      }
-      superdiag[p] = cabsf(a[p * n + (p + 1)]);
-      a[p * n + (p + 1)] = superdiag[p];
-    }
-  }
-}
-
-static void bidiagonalize_complex64(complex64* a, complex64* u, complex64* v,
-                                    double* diag, double* superdiag, int m,
-                                    int n) {
-  const int minmn = (m < n ? m : n);
-#pragma omp parallel for if (m > 100)
-  for (int i = 0; i < m; i++)
-    for (int j = 0; j < m; j++) u[i * m + j] = (i == j) ? 1.0 : 0.0;
-#pragma omp parallel for if (n > 100)
-  for (int i = 0; i < n; i++)
-    for (int j = 0; j < n; j++) v[i * n + j] = (i == j) ? 1.0 : 0.0;
-  for (int p = 0; p < minmn; ++p) {
-    double norm2 = 0.0;
-    for (int i = p; i < m; i++) {
-      norm2 += creal(a[i * n + p] * conj(a[i * n + p]));
-    }
-    double norm = sqrt(norm2);
-    if (norm > 0.0) {
-      complex64 phase = a[p * n + p] / cabs(a[p * n + p]);
-      complex64 alpha = -norm * phase;
-      a[p * n + p] -= alpha;
-      double beta = 1.0 / creal(conj(alpha) * a[p * n + p] / norm);
-#pragma omp parallel for if (n - p > 100)
-      for (int j = p + 1; j < n; ++j) {
-        complex64 gamma = 0.0 + 0.0 * I;
-        for (int i = p; i < m; i++) gamma += conj(a[i * n + p]) * a[i * n + j];
-        gamma *= beta;
-        for (int i = p; i < m; i++) a[i * n + j] -= gamma * a[i * n + p];
-      }
-#pragma omp parallel for if (m > 100)
-      for (int j = 0; j < m; ++j) {
-        complex64 gamma = 0.0 + 0.0 * I;
-        for (int i = p; i < m; i++) gamma += conj(a[i * n + p]) * u[i * m + j];
-        gamma *= beta;
-        for (int i = p; i < m; i++) u[i * m + j] -= gamma * a[i * n + p];
-      }
-    }
-    diag[p] = cabs(a[p * n + p]);
-    a[p * n + p] = diag[p];
-    if (p < n - 1) {
-      double norm2r = 0.0;
-      for (int j = p + 1; j < n; j++) {
-        norm2r += creal(a[p * n + j] * conj(a[p * n + j]));
-      }
-      double normr = sqrt(norm2r);
-      if (normr > 0.0) {
-        complex64 phase = a[p * n + (p + 1)] / cabs(a[p * n + (p + 1)]);
-        complex64 alpha = -normr * phase;
-        a[p * n + (p + 1)] -= alpha;
-        double beta = 1.0 / creal(a[p * n + (p + 1)] * conj(alpha) / normr);
-#pragma omp parallel for if (m - p > 100)
-        for (int i = p + 1; i < m; ++i) {
-          complex64 gamma = 0.0 + 0.0 * I;
-          for (int j = p + 1; j < n; j++)
-            gamma += a[i * n + j] * conj(a[p * n + j]);
-          gamma *= beta;
-          for (int j = p + 1; j < n; j++) a[i * n + j] -= gamma * a[p * n + j];
-        }
-#pragma omp parallel for if (n > 100)
-        for (int j = 0; j < n; ++j) {
-          complex64 gamma = 0.0 + 0.0 * I;
-          for (int t = p + 1; t < n; t++)
-            gamma += v[t * n + j] * conj(a[p * n + t]);
-          gamma *= beta;
-          for (int t = p + 1; t < n; t++) v[t * n + j] -= gamma * a[p * n + t];
-        }
-      }
-      superdiag[p] = cabs(a[p * n + (p + 1)]);
-      a[p * n + (p + 1)] = superdiag[p];
-    }
-  }
-}
-
-static void svd_qr_iteration_complex32(float* diag, float* superdiag,
-                                       complex32* u, complex32* v, int m, int n,
-                                       int p, int q) {
-  float d = (diag[q - 1] - diag[q]) / 2.0f;
-  float shift =
-      diag[q] - superdiag[q - 1] * superdiag[q - 1] /
-                    (d + sign_float32(d) * hypot_float32(d, superdiag[q - 1]));
-  float c;
-  complex32 s;
-  float f = diag[p] - shift;
-  float g = superdiag[p];
-  for (int k = p; k < q; k++) {
-    givens_complex32(f + 0.0f * I, g + 0.0f * I, &c, &s);
-    if (k > p) superdiag[k - 1] = hypot_float32(f, g);
-    f = c * diag[k] +
-        crealf(s) * superdiag[k];  // Simplified for real diag/superdiag
-    superdiag[k] = -crealf(conj(s)) * diag[k] + c * superdiag[k];
-    g = crealf(s) * diag[k + 1];
-    diag[k + 1] = c * diag[k + 1];
-    apply_givens_right_complex32(v, n, n, k, k + 1, c, s);
-    givens_complex32(f + 0.0f * I, g + 0.0f * I, &c, &s);
-    diag[k] = hypot_float32(f, g);
-    f = c * superdiag[k] + crealf(s) * diag[k + 1];
-    diag[k + 1] = -crealf(conj(s)) * superdiag[k] + c * diag[k + 1];
-    if (k < q - 1) {
-      g = crealf(s) * superdiag[k + 1];
-      superdiag[k + 1] = c * superdiag[k + 1];
-    }
-    apply_givens_left_complex32(u, m, m, k, k + 1, c, s);
-  }
-  superdiag[q - 1] = f;
-}
-
-static void svd_qr_iteration_complex64(double* diag, double* superdiag,
-                                       complex64* u, complex64* v, int m, int n,
-                                       int p, int q) {
-  double d = (diag[q - 1] - diag[q]) / 2.0;
-  double shift =
-      diag[q] - superdiag[q - 1] * superdiag[q - 1] /
-                    (d + sign_float64(d) * hypot_float64(d, superdiag[q - 1]));
-  double c;
-  complex64 s;
-  double f = diag[p] - shift;
-  double g = superdiag[p];
-  for (int k = p; k < q; k++) {
-    givens_complex64(f + 0.0 * I, g + 0.0 * I, &c, &s);
-    if (k > p) superdiag[k - 1] = hypot_float64(f, g);
-    f = c * diag[k] + creal(s) * superdiag[k];
-    superdiag[k] = -creal(conj(s)) * diag[k] + c * superdiag[k];
-    g = creal(s) * diag[k + 1];
-    diag[k + 1] = c * diag[k + 1];
-    apply_givens_right_complex64(v, n, n, k, k + 1, c, s);
-    givens_complex64(f + 0.0 * I, g + 0.0 * I, &c, &s);
-    diag[k] = hypot_float64(f, g);
-    f = c * superdiag[k] + creal(s) * diag[k + 1];
-    diag[k + 1] = -creal(conj(s)) * superdiag[k] + c * diag[k + 1];
-    if (k < q - 1) {
-      g = creal(s) * superdiag[k + 1];
-      superdiag[k + 1] = c * superdiag[k + 1];
-    }
-    apply_givens_left_complex64(u, m, m, k, k + 1, c, s);
-  }
-  superdiag[q - 1] = f;
-}
-
-static void svd_iterate_complex32(float* diag, float* superdiag, complex32* u,
-                                  complex32* v, int m, int n) {
-  const int minmn = (m < n ? m : n);
-  const float tol = NX_EPS32 * (float)(m > n ? m : n);
-  const int max_iter = 75 * minmn;
-  int iter = 0;
-  while (iter++ < max_iter) {
-    int converged = 1;
-    for (int i = 0; i < minmn - 1; i++) {
-      if (fabsf(superdiag[i]) > tol * (diag[i] + diag[i + 1])) {
-        converged = 0;
-        break;
-      }
-    }
-    if (converged) break;
-    int q_pos = minmn - 1;
-    while (q_pos > 0 && fabsf(superdiag[q_pos - 1]) <=
-                            tol * (diag[q_pos - 1] + diag[q_pos])) {
-      superdiag[q_pos - 1] = 0.0f;
-      q_pos--;
-    }
-    int p_pos = q_pos;
-    while (p_pos > 0 &&
-           fabsf(superdiag[p_pos - 1]) > tol * (diag[p_pos - 1] + diag[p_pos]))
-      p_pos--;
-    if (p_pos < q_pos) {
-      svd_qr_iteration_complex32(diag, superdiag, u, v, m, n, p_pos, q_pos);
-    }
-  }
-}
-
-static void svd_iterate_complex64(double* diag, double* superdiag, complex64* u,
-                                  complex64* v, int m, int n) {
-  const int minmn = (m < n ? m : n);
-  const double tol = NX_EPS64 * (double)(m > n ? m : n);
-  const int max_iter = 75 * minmn;
-  int iter = 0;
-  while (iter++ < max_iter) {
-    int converged = 1;
-    for (int i = 0; i < minmn - 1; i++) {
-      if (fabs(superdiag[i]) > tol * (diag[i] + diag[i + 1])) {
-        converged = 0;
-        break;
-      }
-    }
-    if (converged) break;
-    int q_pos = minmn - 1;
-    while (q_pos > 0 && fabs(superdiag[q_pos - 1]) <=
-                            tol * (diag[q_pos - 1] + diag[q_pos])) {
-      superdiag[q_pos - 1] = 0.0;
-      q_pos--;
-    }
-    int p_pos = q_pos;
-    while (p_pos > 0 &&
-           fabs(superdiag[p_pos - 1]) > tol * (diag[p_pos - 1] + diag[p_pos]))
-      p_pos--;
-    if (p_pos < q_pos) {
-      svd_qr_iteration_complex64(diag, superdiag, u, v, m, n, p_pos, q_pos);
-    }
-  }
-}
-
-static void svd_complex32(complex32* a, complex32* u, float* s, complex32* vt,
-                          int m, int n, int full_matrices) {
+static lapack_int svd_complex32(complex32* a, complex32* u, float* s,
+                                complex32* vt, int m, int n,
+                                int full_matrices) {
   // LAPACK destroys the input matrix, so we need to make a copy
   complex32* a_copy = (complex32*)malloc(m * n * sizeof(complex32));
-  if (!a_copy) return;
+  if (!a_copy) return -1010;
   memcpy(a_copy, a, m * n * sizeof(complex32));
 
   char jobu = full_matrices ? 'A' : 'S';
@@ -969,12 +202,13 @@ static void svd_complex32(complex32* a, complex32* u, float* s, complex32* vt,
   float* superb = (float*)malloc((minmn - 1) * sizeof(float));
   if (!superb) {
     free(a_copy);
-    return;
+    return -1010;
   }
 
   lapack_int info = LAPACKE_cgesvd(LAPACK_ROW_MAJOR, jobu, jobvt, m, n, a_copy, n, s, u, ldu, vt, ldvt, superb);
   free(a_copy);
   free(superb);
+  if (info != 0) return info;
   // Note: LAPACK returns singular values in descending order, which matches our expectation
   // Note: For complex SVD, LAPACK returns V^H (conjugate transpose), but our interface expects V^T
   // We need to conjugate the result to match our expected output
@@ -991,13 +225,15 @@ static void svd_complex32(complex32* a, complex32* u, float* s, complex32* vt,
       }
     }
   }
+  return 0;
 }
 
-static void svd_complex64(complex64* a, complex64* u, double* s, complex64* vt,
-                          int m, int n, int full_matrices) {
+static lapack_int svd_complex64(complex64* a, complex64* u, double* s,
+                                complex64* vt, int m, int n,
+                                int full_matrices) {
   // LAPACK destroys the input matrix, so we need to make a copy
   complex64* a_copy = (complex64*)malloc(m * n * sizeof(complex64));
-  if (!a_copy) return;
+  if (!a_copy) return -1010;
   memcpy(a_copy, a, m * n * sizeof(complex64));
 
   char jobu = full_matrices ? 'A' : 'S';
@@ -1010,12 +246,13 @@ static void svd_complex64(complex64* a, complex64* u, double* s, complex64* vt,
   double* superb = (double*)malloc((minmn - 1) * sizeof(double));
   if (!superb) {
     free(a_copy);
-    return;
+    return -1010;
   }
 
   lapack_int info = LAPACKE_zgesvd(LAPACK_ROW_MAJOR, jobu, jobvt, m, n, a_copy, n, s, u, ldu, vt, ldvt, superb);
   free(a_copy);
   free(superb);
+  if (info != 0) return info;
   // Note: LAPACK returns singular values in descending order, which matches our expectation
   // Note: For complex SVD, LAPACK returns V^H (conjugate transpose), but our interface expects V^T
   // We need to conjugate the result to match our expected output
@@ -1032,10 +269,12 @@ static void svd_complex64(complex64* a, complex64* u, double* s, complex64* vt,
       }
     }
   }
+  return 0;
 }
 
-static void svd_float16(uint16_t* a, uint16_t* u, uint16_t* s, uint16_t* vt,
-                        int m, int n, int full_matrices) {
+static lapack_int svd_float16(uint16_t* a, uint16_t* u, uint16_t* s,
+                              uint16_t* vt, int m, int n,
+                              int full_matrices) {
   int minmn = m < n ? m : n;
   float* a_float = (float*)malloc(m * n * sizeof(float));
   int u_cols = full_matrices ? m : minmn;
@@ -1048,22 +287,26 @@ static void svd_float16(uint16_t* a, uint16_t* u, uint16_t* s, uint16_t* vt,
     free(u_float);
     free(s_float);
     free(vt_float);
-    return;
+    return -1010;
   }
   for (int i = 0; i < m * n; i++) a_float[i] = half_to_float(a[i]);
-  svd_float32(a_float, u_float, s_float, vt_float, m, n, full_matrices);
-  for (int i = 0; i < m * u_cols; i++) u[i] = float_to_half(u_float[i]);
-  for (int i = 0; i < minmn; i++) s[i] = float_to_half(s_float[i]);
-  for (int i = 0; i < vt_rows * n; i++) vt[i] = float_to_half(vt_float[i]);
+  lapack_int info =
+      svd_float32(a_float, u_float, s_float, vt_float, m, n, full_matrices);
+  if (info == 0) {
+    for (int i = 0; i < m * u_cols; i++) u[i] = float_to_half(u_float[i]);
+    for (int i = 0; i < minmn; i++) s[i] = float_to_half(s_float[i]);
+    for (int i = 0; i < vt_rows * n; i++) vt[i] = float_to_half(vt_float[i]);
+  }
   free(a_float);
   free(u_float);
   free(s_float);
   free(vt_float);
+  return info;
 }
 
-static void svd_bfloat16(caml_ba_bfloat16* a, caml_ba_bfloat16* u,
-                         caml_ba_bfloat16* s, caml_ba_bfloat16* vt, int m,
-                         int n, int full_matrices) {
+static lapack_int svd_bfloat16(caml_ba_bfloat16* a, caml_ba_bfloat16* u,
+                               caml_ba_bfloat16* s, caml_ba_bfloat16* vt,
+                               int m, int n, int full_matrices) {
   int minmn = m < n ? m : n;
   float* a_float = (float*)malloc(m * n * sizeof(float));
   int u_cols = full_matrices ? m : minmn;
@@ -1076,22 +319,28 @@ static void svd_bfloat16(caml_ba_bfloat16* a, caml_ba_bfloat16* u,
     free(u_float);
     free(s_float);
     free(vt_float);
-    return;
+    return -1010;
   }
   for (int i = 0; i < m * n; i++) a_float[i] = bfloat16_to_float(a[i]);
-  svd_float32(a_float, u_float, s_float, vt_float, m, n, full_matrices);
-  for (int i = 0; i < m * u_cols; i++) u[i] = float_to_bfloat16(u_float[i]);
-  for (int i = 0; i < minmn; i++) s[i] = float_to_bfloat16(s_float[i]);
-  for (int i = 0; i < vt_rows * n; i++) vt[i] = float_to_bfloat16(vt_float[i]);
+  lapack_int info =
+      svd_float32(a_float, u_float, s_float, vt_float, m, n, full_matrices);
+  if (info == 0) {
+    for (int i = 0; i < m * u_cols; i++)
+      u[i] = float_to_bfloat16(u_float[i]);
+    for (int i = 0; i < minmn; i++) s[i] = float_to_bfloat16(s_float[i]);
+    for (int i = 0; i < vt_rows * n; i++)
+      vt[i] = float_to_bfloat16(vt_float[i]);
+  }
   free(a_float);
   free(u_float);
   free(s_float);
   free(vt_float);
+  return info;
 }
 
-static void svd_f8e4m3(caml_ba_fp8_e4m3* a, caml_ba_fp8_e4m3* u,
-                       caml_ba_fp8_e4m3* s, caml_ba_fp8_e4m3* vt, int m, int n,
-                       int full_matrices) {
+static lapack_int svd_f8e4m3(caml_ba_fp8_e4m3* a, caml_ba_fp8_e4m3* u,
+                             caml_ba_fp8_e4m3* s, caml_ba_fp8_e4m3* vt, int m,
+                             int n, int full_matrices) {
   int minmn = m < n ? m : n;
   float* a_float = (float*)malloc(m * n * sizeof(float));
   int u_cols = full_matrices ? m : minmn;
@@ -1104,22 +353,27 @@ static void svd_f8e4m3(caml_ba_fp8_e4m3* a, caml_ba_fp8_e4m3* u,
     free(u_float);
     free(s_float);
     free(vt_float);
-    return;
+    return -1010;
   }
   for (int i = 0; i < m * n; i++) a_float[i] = fp8_e4m3_to_float(a[i]);
-  svd_float32(a_float, u_float, s_float, vt_float, m, n, full_matrices);
-  for (int i = 0; i < m * u_cols; i++) u[i] = float_to_fp8_e4m3(u_float[i]);
-  for (int i = 0; i < minmn; i++) s[i] = float_to_fp8_e4m3(s_float[i]);
-  for (int i = 0; i < vt_rows * n; i++) vt[i] = float_to_fp8_e4m3(vt_float[i]);
+  lapack_int info =
+      svd_float32(a_float, u_float, s_float, vt_float, m, n, full_matrices);
+  if (info == 0) {
+    for (int i = 0; i < m * u_cols; i++) u[i] = float_to_fp8_e4m3(u_float[i]);
+    for (int i = 0; i < minmn; i++) s[i] = float_to_fp8_e4m3(s_float[i]);
+    for (int i = 0; i < vt_rows * n; i++)
+      vt[i] = float_to_fp8_e4m3(vt_float[i]);
+  }
   free(a_float);
   free(u_float);
   free(s_float);
   free(vt_float);
+  return info;
 }
 
-static void svd_f8e5m2(caml_ba_fp8_e5m2* a, caml_ba_fp8_e5m2* u,
-                       caml_ba_fp8_e5m2* s, caml_ba_fp8_e5m2* vt, int m, int n,
-                       int full_matrices) {
+static lapack_int svd_f8e5m2(caml_ba_fp8_e5m2* a, caml_ba_fp8_e5m2* u,
+                             caml_ba_fp8_e5m2* s, caml_ba_fp8_e5m2* vt, int m,
+                             int n, int full_matrices) {
   int minmn = m < n ? m : n;
   float* a_float = (float*)malloc(m * n * sizeof(float));
   int u_cols = full_matrices ? m : minmn;
@@ -1132,17 +386,22 @@ static void svd_f8e5m2(caml_ba_fp8_e5m2* a, caml_ba_fp8_e5m2* u,
     free(u_float);
     free(s_float);
     free(vt_float);
-    return;
+    return -1010;
   }
   for (int i = 0; i < m * n; i++) a_float[i] = fp8_e5m2_to_float(a[i]);
-  svd_float32(a_float, u_float, s_float, vt_float, m, n, full_matrices);
-  for (int i = 0; i < m * u_cols; i++) u[i] = float_to_fp8_e5m2(u_float[i]);
-  for (int i = 0; i < minmn; i++) s[i] = float_to_fp8_e5m2(s_float[i]);
-  for (int i = 0; i < vt_rows * n; i++) vt[i] = float_to_fp8_e5m2(vt_float[i]);
+  lapack_int info =
+      svd_float32(a_float, u_float, s_float, vt_float, m, n, full_matrices);
+  if (info == 0) {
+    for (int i = 0; i < m * u_cols; i++) u[i] = float_to_fp8_e5m2(u_float[i]);
+    for (int i = 0; i < minmn; i++) s[i] = float_to_fp8_e5m2(s_float[i]);
+    for (int i = 0; i < vt_rows * n; i++)
+      vt[i] = float_to_fp8_e5m2(vt_float[i]);
+  }
   free(a_float);
   free(u_float);
   free(s_float);
   free(vt_float);
+  return info;
 }
 
 // ============================================================================

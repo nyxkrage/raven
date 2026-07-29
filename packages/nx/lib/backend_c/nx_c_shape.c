@@ -86,42 +86,6 @@ typedef struct {
   copy_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2;
 } copy_op_table;
 
-// Helper to get element size in bytes for memcpy eligibility (0 for
-// unsupported)
-static int get_elem_size(int kind) {
-  switch (kind) {
-    case CAML_BA_SINT8:
-    case CAML_BA_UINT8:
-    case NX_BA_BOOL:
-    case NX_BA_FP8_E4M3:
-    case NX_BA_FP8_E5M2:
-      return 1;
-    case CAML_BA_SINT16:
-    case CAML_BA_UINT16:
-    case CAML_BA_FLOAT16:
-    case NX_BA_BFLOAT16:
-      return 2;
-    case CAML_BA_INT32:
-    case CAML_BA_FLOAT32:
-    case NX_BA_UINT32:
-      return 4;
-    case CAML_BA_INT64:
-    case CAML_BA_NATIVE_INT:
-    case CAML_BA_FLOAT64:
-    case NX_BA_UINT64:
-      return 8;
-    case CAML_BA_COMPLEX32:
-      return 8;
-    case CAML_BA_COMPLEX64:
-      return 16;
-    case NX_BA_INT4:
-    case NX_BA_UINT4:
-      return 0;  // Packed, no memcpy
-    default:
-      return 0;
-  }
-}
-
 // is_contiguous is now defined in nx_c_shared.h
 
 // Helper iterator for inner dimensions in copy operations

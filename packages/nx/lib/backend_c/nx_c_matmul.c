@@ -27,6 +27,16 @@ typedef struct {
   matmul_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2;
 } matmul_op_table;
 
+static void *alloc_matrix(long rows, long columns, size_t element_size) {
+  if (rows < 0 || columns < 0) return NULL;
+  size_t row_count = (size_t)rows;
+  size_t column_count = (size_t)columns;
+  if (column_count != 0 && row_count > SIZE_MAX / column_count) return NULL;
+  size_t elements = row_count * column_count;
+  if (element_size != 0 && elements > SIZE_MAX / element_size) return NULL;
+  return malloc(elements * element_size);
+}
+
 // Macro to generate all standard type variants for matmul
 #define GENERATE_MATMUL_OP(suffix, T, ACCUM_T, CAST) \
   MATMUL_OP_FOR_TYPE(suffix, T, ACCUM_T, CAST)
@@ -352,9 +362,9 @@ static void nx_c_matmul_f32_kernel(void *a_data, long a_off, long a_rs,
                 a + a_off, lda, b + b_off, ldb, 0.0f, c + c_off, ldc);
   } else {
     /* Non-contiguous layout: pack matrices first */
-    float *a_packed = (float *)malloc(m * k * sizeof(float));
-    float *b_packed = (float *)malloc(k * n * sizeof(float));
-    float *c_packed = (float *)malloc(m * n * sizeof(float));
+    float *a_packed = (float *)alloc_matrix(m, k, sizeof(float));
+    float *b_packed = (float *)alloc_matrix(k, n, sizeof(float));
+    float *c_packed = (float *)alloc_matrix(m, n, sizeof(float));
     if (!a_packed || !b_packed || !c_packed) {
       free(a_packed);
       free(b_packed);
@@ -416,9 +426,9 @@ static void nx_c_matmul_f64_kernel(void *a_data, long a_off, long a_rs,
                 a + a_off, lda, b + b_off, ldb, 0.0, c + c_off, ldc);
   } else {
     /* Non-contiguous layout: pack matrices first */
-    double *a_packed = (double *)malloc(m * k * sizeof(double));
-    double *b_packed = (double *)malloc(k * n * sizeof(double));
-    double *c_packed = (double *)malloc(m * n * sizeof(double));
+    double *a_packed = (double *)alloc_matrix(m, k, sizeof(double));
+    double *b_packed = (double *)alloc_matrix(k, n, sizeof(double));
+    double *c_packed = (double *)alloc_matrix(m, n, sizeof(double));
     if (!a_packed || !b_packed || !c_packed) {
       free(a_packed);
       free(b_packed);
@@ -488,9 +498,12 @@ static void nx_c_matmul_c32_kernel(void *a_data, long a_off, long a_rs,
                 a + a_off, lda, b + b_off, ldb, &beta, c + c_off, ldc);
   } else {
     /* Non-contiguous layout: pack matrices first */
-    complex32 *a_packed = (complex32 *)malloc(m * k * sizeof(complex32));
-    complex32 *b_packed = (complex32 *)malloc(k * n * sizeof(complex32));
-    complex32 *c_packed = (complex32 *)malloc(m * n * sizeof(complex32));
+    complex32 *a_packed =
+        (complex32 *)alloc_matrix(m, k, sizeof(complex32));
+    complex32 *b_packed =
+        (complex32 *)alloc_matrix(k, n, sizeof(complex32));
+    complex32 *c_packed =
+        (complex32 *)alloc_matrix(m, n, sizeof(complex32));
     if (!a_packed || !b_packed || !c_packed) {
       free(a_packed);
       free(b_packed);
@@ -555,9 +568,12 @@ static void nx_c_matmul_c64_kernel(void *a_data, long a_off, long a_rs,
                 a + a_off, lda, b + b_off, ldb, &beta, c + c_off, ldc);
   } else {
     /* Non-contiguous layout: pack matrices first */
-    complex64 *a_packed = (complex64 *)malloc(m * k * sizeof(complex64));
-    complex64 *b_packed = (complex64 *)malloc(k * n * sizeof(complex64));
-    complex64 *c_packed = (complex64 *)malloc(m * n * sizeof(complex64));
+    complex64 *a_packed =
+        (complex64 *)alloc_matrix(m, k, sizeof(complex64));
+    complex64 *b_packed =
+        (complex64 *)alloc_matrix(k, n, sizeof(complex64));
+    complex64 *c_packed =
+        (complex64 *)alloc_matrix(m, n, sizeof(complex64));
     if (!a_packed || !b_packed || !c_packed) {
       free(a_packed);
       free(b_packed);
@@ -750,4 +766,3 @@ CAMLprim value caml_nx_matmul(value v_a, value v_b, value v_c) {
   dispatch_matmul_op(v_a, v_b, v_c, &matmul_table, "matmul");
   CAMLreturn(Val_unit);
 }
-

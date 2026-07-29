@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file.
 
 ### Munin (new)
 
+- Fix system mount enumeration after allocation failures so monitoring reports
+  an error safely instead of retaining freed storage.
+
 Local experiment tracking for Raven. Evolves `kaun-board` into a full
 experiment tracker — the Raven equivalent of W&B or MLFlow, without a server.
 Log metrics and artifacts from your training script, monitor runs live in the
@@ -36,6 +39,8 @@ thread.
 
 ### Nx
 
+- Enable `sum`, `min`, and `max` for `uint32` and `uint64`, and preserve exact
+  low-precision values when scatter assignment copies into its destination.
 - Keep `Nx.sigmoid` constants scalar so JIT backends fuse the standard
   `1 / (1 + exp (-x))` expression without reading a full-sized ones tensor.
 - Fix float16 conversion in the C backend so casts and float16 operations
